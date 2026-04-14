@@ -1,0 +1,698 @@
+---
+title: "BNST 2025 Analysis: Cell Type Assignment"
+author: "Sinead Archdeacon"
+date: "2026-03-20"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      message = FALSE,  
+                      warning = FALSE)
+```
+
+## Introduction
+
+The next step of this snRNA-seq analysis is cell type assignment, which was done through cell type label transfer from reference data set from the Allen Brain Atlas. 
+<https://alleninstitute.github.io/abc_atlas_access/descriptions/WMB-10Xv3.html>
+
+*Note:* I kept control and stress data separate for this step.
+
+```{r Environment setup}
+
+# Increase capacity of R: necessary at the start of every session
+options(future.globals.maxSize = 60000 * 1024^2)
+
+# Load libraries
+library(Seurat)
+library(dplyr)
+library(tidyr)
+library(tibble)
+library(ggplot2)
+library(sctransform) 
+library(harmony)
+library(zellkonverter)
+library(SingleCellExperiment)
+library(AnnotationDbi)
+library(org.Mm.eg.db)
+library(cowplot)
+```
+
+## Reading in reference data
+
+First, read in the raw data files.
+
+```{r Read in reference data}
+
+# Download reference dataset files into working directory
+options(timeout = max(600, getOption("timeout")))  # 10 minute timeout
+
+# reference expression matrix
+download.file(
+  url = "https://allen-brain-cell-atlas.s3.us-west-2.amazonaws.com/expression_matrices/WMB-10Xv3/20230630/WMB-10Xv3-PAL-raw.h5ad",
+  destfile = "WMB-10Xv3-PAL-raw.h5ad",
+  mode = "wb",
+  method = "curl" # more stable for large file downloads
+)
+
+# reference metadata
+download.file(
+  url = "https://allen-brain-cell-atlas.s3-us-west-2.amazonaws.com/metadata/WMB-10X/20230630/cell_metadata.csv",
+  destfile = "WMB-10X-cell_metadata.csv", # this contains the cluster alias
+  mode = "wb",
+  method = "curl"
+)
+download.file(
+  url = "https://allen-brain-cell-atlas.s3-us-west-2.amazonaws.com/metadata/WMB-10X/20230630/region_of_interest_metadata.csv",
+  destfile = "WMB-10X-roi_metadata.csv",
+  mode = "wb",
+  method = "curl"
+)
+download.file(
+  url = "https://allen-brain-cell-atlas.s3-us-west-2.amazonaws.com/metadata/WMB-taxonomy/20230630/cluster_to_cluster_annotation_membership.csv",
+  destfile = "WMB-10X-celltypes_metadata.csv",
+  mode = "wb",
+  method = "curl"
+)
+```
+
+Then convert the reference data to a Seurat object with metadata.
+
+```{r Seurat object creation}
+
+sce <- readH5AD("WMB-10Xv3-PAL-raw.h5ad", use_hdf5 = TRUE, reader = "R")
+sce
+colnames(colData(sce))
+head(rownames(sce)) # should be ENSMBL IDS
+gene_mapping <- mapIds(
+  org.Mm.eg.db,
+  keys = rownames(sce),
+  column = "SYMBOL",
+  keytype = "ENSEMBL",
+  multiVals = "first"
+)
+sce <- sce[!is.na(gene_mapping), ]
+rownames(sce) <- gene_mapping[!is.na(gene_mapping)]
+assay(sce, "X") <- as.matrix(assay(sce, "X"))
+allen_ref <- as.Seurat(sce, counts = "X", data = NULL)   
+head(rownames(allen_ref)) # should be gene symbols    
+
+# Add metadata 
+cell_metadata <- read.csv("WMB-10X-cell_metadata.csv", stringsAsFactors = FALSE) 
+roi_metadata  <- read.csv("region_of_interest_metadata.csv", stringsAsFactors = FALSE)
+merged_metadata <- merge(cell_metadata, roi_metadata,
+                         by.x = "region_of_interest_acronym", by.y = "acronym", all.x = TRUE)
+rownames(merged_metadata) <- merged_metadata$cell_label
+merged_metadata <- merged_metadata[colnames(allen_ref), ]
+allen_ref <- AddMetaData(allen_ref, metadata = merged_metadata)
+
+# Match "cluster_alias" to "cluster annotation term"
+cluster_alias_to_cluster_annotation_term_name <- read.csv("WMB-10X-celltypes_metadata.csv") 
+
+# Reformat cluster_alias_to_cluster_annotation_term table to enable adding multiple cell type granularities (e.g. division, class, subclass)
+cluster_alias_to_cluster_annotation_term_name_wide <- 
+  cluster_alias_to_cluster_annotation_term_name %>%
+  dplyr::select(
+    cluster_alias,
+    cluster_annotation_term_set_name,
+    cluster_annotation_term_name) %>%
+  tidyr::pivot_wider(
+    names_from = cluster_annotation_term_set_name,
+    values_from = cluster_annotation_term_name)
+
+# Add cluster annotation term 
+allen_ref@meta.data <- allen_ref@meta.data %>%
+  rownames_to_column(var = "temp_cell_barcode") %>%
+  left_join(cluster_alias_to_cluster_annotation_term_name_wide, by = "cluster_alias") %>%
+  column_to_rownames(var = "temp_cell_barcode")
+
+# Ensure all new columns are plain characters (no names)
+allen_ref$division <- as.character(allen_ref$division)
+allen_ref$class    <- as.character(allen_ref$class)
+allen_ref$subclass <- as.character(allen_ref$subclass)
+allen_ref$supertype<- as.character(allen_ref$supertype)
+allen_ref$cluster  <- as.character(allen_ref$cluster)
+
+# Inspect metadata
+length(unique(allen_ref$division)) #7, most broad
+length(unique(allen_ref$class)) #22
+length(unique(allen_ref$subclass)) #133, this resolution was not needed for my data
+length(unique(allen_ref$supertype)) #424, this resolution was not needed for my data
+length(unique(allen_ref$cluster)) #1251, most granular, this resolution was not needed for my data
+
+# Remove irrelevant metadata columns 
+allen_ref@meta.data <- allen_ref@meta.data[ , !(colnames(allen_ref@meta.data) %in% 
+  c("anatomical_division_label", "region_of_interest_acronym", "library_method", "dataset_label", 
+  "matrix_label", "label", "name", "order", "color_hex_triplet"))]
+```
+
+## Reference data preprocessing
+
+Follows the same steps as the BNST data preprocessing.
+
+``` {r Preprocess the reference data}
+
+allen_ref <- NormalizeData(allen_ref)
+allen_ref <- FindVariableFeatures(allen_ref, selection.method = "vst", nfeatures = 3000)
+allen_ref <- ScaleData(allen_ref)
+allen_ref <- RunPCA(allen_ref)
+ElbowPlot(allen_ref, ndims= 50) # pick a dim based on the elbow plot
+allen_ref <- FindNeighbors(allen_ref, dims = 1:50) # clusters already provided
+set.seed(123)
+allen_ref <- RunUMAP(allen_ref, dims = 1:50, return.model = TRUE)
+
+DimPlot(allen_ref, reduction = "umap", group.by = "division", label = FALSE) + 
+  ggtitle("Reference Dataset UMAP by Division") + theme(legend.position = "right")
+DimPlot(allen_ref, reduction = "umap", group.by = "class", label = FALSE) + 
+  ggtitle("Reference Dataset UMAP by Class") + theme(legend.position = "right")
+
+# Clean up environment 
+rm(cell_metadata, cluster_alias_to_cluster_term_name, cluster_alias_to_cluster_term_name_wide, merged_metadata, roi_metadata, sce)
+
+allen_ref <- saveRDS(allen_ref, file = "C:/shares/btrainor/Sinead/GitHub/allen_ref_PAL.rds")
+``` 
+
+## Controls label transfer
+
+First, read in the pre-processed query data and recompute the RNA assay for comparison to the reference data (which only has an RNA assay, not SCT).
+
+```{r CONTROLS: read in pre-processed query data}
+BNST.controls <- readRDS(file = "C:/shares/btrainor/Sinead/GitHub/BNST.controls.rds")
+DefaultAssay(BNST.controls) <- "RNA"
+BNST.controls <- NormalizeData(BNST.controls, verbose = FALSE)
+BNST.controls <- FindVariableFeatures(BNST.controls, nfeatures = 3000, verbose = FALSE)
+BNST.controls <- ScaleData(BNST.controls, verbose = FALSE)
+BNST.controls <- RunPCA(BNST.controls, verbose = FALSE)
+```
+
+### Data mapping
+This uses a unimodal UMAP projection. **MapQuery** is recommended instead of TransferData for Seurat v4.3+
+
+*See output in BNST.controls_celltype_mapping_plots.pdf*
+
+```{r CONTROLS: Map query data to reference data}
+
+anchors <- FindTransferAnchors(reference = allen_ref, query = BNST.controls, normalization.method = "LogNormalize",
+                               dims = 1:50, reference.reduction = "pca")
+# 8859 anchors found
+BNST.controls <- MapQuery(anchorset = anchors, reference = allen_ref, query = BNST.controls,
+                                  refdata = list(division = "division", class = "class"), 
+                                  reference.reduction = "pca", reduction.model = "umap")
+
+# Visualize query cells alongside reference
+p1a <- DimPlot(allen_ref, reduction = "umap", group.by = "division", label = TRUE, label.size = 3,
+              repel = TRUE) + NoLegend() + ggtitle("Reference Divisions")
+p1b <- DimPlot(BNST.controls, reduction = "ref.umap", group.by = "predicted.division", label = TRUE,
+              label.size = 3, repel = TRUE) + NoLegend() + ggtitle("BNST Controls Divisions")
+print(p1a + p1b)
+p2a <- DimPlot(allen_ref, reduction = "umap", group.by = "class", label = TRUE, label.size = 3,
+              repel = TRUE) + ggtitle("Reference Classes") + theme(legend.position = "right")
+p2b <- DimPlot(BNST.controls, reduction = "ref.umap", group.by = "predicted.class", label = TRUE,
+              label.size = 3, repel = TRUE) + ggtitle("BNST Controls Classes") + theme(legend.position = "right")
+print(p2a + p2b)
+
+# More visualizing
+## Create UMAP plots for each Seurat object and extract UMAP coordinates
+umap_coords1 <- as.data.frame(Embeddings(allen_ref, reduction = "umap"))   
+umap_coords2 <- as.data.frame(Embeddings(BNST.controls, reduction = "ref.umap"))
+colnames(umap_coords2) <- c("umap_1", "umap_2")
+umap_coords1$origin = "Reference Data"
+umap_coords2$origin = "BNST Controls Data"
+
+## Merge the UMAP coordinates based on common identifier
+merged_umap_coords <- rbind(umap_coords1, umap_coords2)
+merged_umap_coords$origin <- factor(merged_umap_coords$origin, levels = c("BNST Controls Data","Reference Data"))
+merged_umap_coords <- merged_umap_coords %>% arrange(desc(origin))
+
+## Plot the overlay of UMAPs
+p3 <- ggplot(data = merged_umap_coords, aes(x = umap_1, y = umap_2, color = origin)) +
+  geom_point(size = 0.5) +
+  scale_color_manual(values = c("red", "black")) +
+  theme_cowplot()
+print(p3)
+``` 
+
+### By-cluster voting: division
+Cluster identities are assigned by selecting the transferred division label that is most common in that cluster's cells.
+
+*See output in BNST.controls_by-cluster_voting_plots.pdf*
+
+Cluster purity refers to the number of cells in cluster that fall under most popular division, divided by the total
+number of cells. The purity should be above 60% for most clusters.
+
+```{r CONTROLS: By-cluster voting: division}
+
+print(unique(BNST.controls$predicted.division)) 
+```
+
+There were 7 unique divisions assigned through data mapping, and I tried to find a query resolution that gave a similar number of clusters.
+
+```{r CONTROLS: clustering for division, results = 'hide'}
+# try a range of clusters
+res.vec <- c(0.01, 0.03, 0.05, 0.07)
+BNST.controls <- FindClusters(BNST.controls, graph.name = "SCT_snn", resolution = res.vec)
+```
+
+res.0.05 gave 10 clusters, so I picked this.
+
+```{r CONTROLS: table, histogram}
+
+# make table with number of cells with each predicted division for each cluster
+clust_count_table_division <- BNST.controls@meta.data %>% group_by(SCT_snn_res.0.05, predicted.division) %>% dplyr::count()   
+pct_df <- clust_count_table_division %>%
+  group_by(SCT_snn_res.0.05) %>%
+  mutate(max_n = max(n)) %>%   # find number of cells belonging to most popular division in each cluster
+  ungroup() %>%
+  group_by(SCT_snn_res.0.05, max_n) %>%
+  summarise(percentage = max(n) / sum(n) * 100) %>%   # compute cluster purity 
+  ungroup()
+
+hist(
+  pct_df$percentage,
+  main = "Histogram of Cluster Purity (res.0.05)",
+  xlab = "Purity (% of cells in dominant predicted division)",
+  ylab = "Number of clusters"
+)
+```
+
+The histogram shows high cluster purity at this resolution.
+
+```{r CONTROLS: by-cluster voting for division continued}
+
+# table of most popular division for each cluster
+max_table <- clust_count_table_division %>% group_by(SCT_snn_res.0.05) %>% slice_max(n) %>% ungroup()  
+max_map <- setNames(max_table$predicted.division, nm=max_table$SCT_snn_res.0.05)
+
+# assign the most popular division to each cluster
+BNST.controls@meta.data$pred.div.res.0.05 <- max_map[BNST.controls@meta.data$SCT_snn_res.0.05]
+BNST.controls@meta.data$pred.div.res.0.05 <- gsub(" ", "_" ,BNST.controls@meta.data$pred.div.res.0.05)
+
+# visualize
+p4 <- DimPlot(BNST.controls, reduction = "umap", group.by = "pred.div.res.0.05", label = TRUE,
+              pt.size=1, label.size = 3, repel = TRUE, label.box = TRUE) + NoLegend() + 
+  ggtitle("BNST Controls Transferred Labels by Division")
+print(p4)
+```  
+
+### By-cluster voting: class
+As with divisions, cluster identities are assigned by selecting the transferred class label most common in that cluster's cells.
+
+```{r CONTROLS By-cluster voting: class}
+
+print(unique(BNST.controls$predicted.class))
+```
+
+There were 22 unique classes assigned through data mapping. As with divisions, I wanted to pick a query resolution that gave a similar number of clusters. 
+
+```{r CONTROLS: clustering for division, results = 'hide'}
+# try a range of clusters
+res.vec <- c(0.1, 0.2, 0.3, 0.4, 0.5)
+BNST.controls <- FindClusters(BNST.controls, graph.name = "SCT_snn", resolution = res.vec)
+```
+
+res.0.3 gives 24 clusters, so I picked this.
+
+```{r CONTROLS: table, histogram}
+
+# make table with number of cells with each predicted class for each cluster
+clust_count_table_class <- BNST.controls@meta.data %>% group_by(SCT_snn_res.0.3, predicted.class) %>%
+dplyr::count()  
+pct_df <- clust_count_table_class %>%
+  group_by(SCT_snn_res.0.3) %>%
+  mutate(max_n = max(n)) %>%   # find number of cells belonging to most popular class in each cluster
+  ungroup() %>%
+  group_by(SCT_snn_res.0.3, max_n) %>%
+  summarise(percentage = max(n) / sum(n) * 100) %>%   # compute cluster purity
+  ungroup()
+
+hist(
+  pct_df$percentage,
+  main = "Histogram of Cluster Purity (res.0.3)",
+  xlab = "Purity (% of cells in dominant predicted class)",
+  ylab = "Number of clusters"
+)
+```
+
+The histogram shows that most clusters have high purity at this resolution. 
+
+```{r CONTROLS: by-cluster voting for class continued}
+
+# table of most popular class for each cluster
+max_table <- clust_count_table_class %>% group_by(SCT_snn_res.0.3) %>% slice_max(n) %>% ungroup()  
+max_map <- setNames(max_table$predicted.class, nm=max_table$SCT_snn_res.0.3)
+
+# assign most popular class to each cluster
+BNST.controls@meta.data$pred.class.res.0.3 <- max_map[BNST.controls@meta.data$SCT_snn_res.0.3]
+BNST.controls@meta.data$pred.class.res.0.3 <- gsub(" ", "_" ,BNST.controls@meta.data$pred.class.res.0.3)
+
+# visualize 
+p5 <- DimPlot(BNST.controls, reduction = "umap", group.by = "pred.class.res.0.3", label = TRUE,
+              pt.size=1, label.size = 3, repel = TRUE, label.box = TRUE) + NoLegend() + 
+  ggtitle("BNST Controls Transferred Labels by Class")
+print(p5)
+``` 
+
+### Save progress
+
+```{r CONTROLS: Save progress}
+
+# Remove irrelevant metadata columns
+BNST.controls@meta.data <- BNST.controls@meta.data[ , !(colnames(BNST.controls@meta.data) %in% 
+            c("condition", "DoubletStatus", "SCT_snn_res.0.01", "SCT_snn_res.0.02", "SCT_snn_res.0.04",
+            "SCT_snn_res.0.05", "SCT_snn_res.0.06", "SCT_snn_res.0.07", "SCT_snn_res.0.1", "SCT_snn_res.0.2",  
+            "SCT_snn_res.0.3", "SCT_snn_res.0.4", "SCT_snn_res.0.5", "predicted.division.score", 
+            "predicted.class.score"))]
+
+# Clean up recursions before saving  #NOT WORKING
+BNST.controls@tools <- list()
+BNST.controls@anchors <- NULL
+if ("ref.umap" %in% names(BNST.controls@reductions)) {
+  BNST.controls@reductions$ref.umap@misc$model <- NULL
+}
+if ("umap" %in% names(BNST.controls@reductions)) {
+  BNST.controls@reductions$umap@misc$model <- NULL
+}
+BNST.controls@reductions$ref.umap@misc <- list()
+BNST.controls@reductions$umap@misc <- list()
+BNST.controls@misc <- list()
+
+BNST.controls.clean <- DietSeurat(
+  BNST.controls,
+  counts = TRUE,
+  data = TRUE,
+  scale.data = FALSE,
+  dimreducs = c("pca", "umap", "ref.umap"),
+  assays = c("RNA", "SCT"))
+
+BNST.controls[["ref.umap"]] <- NULL
+BNST.controls[["umap"]] <- NULL
+BNST.controls@tools <- NULL
+
+saveRDS(BNST.controls, file = "C:/shares/btrainor/Sinead/GitHub/BNST.controls_mapped.rds")
+
+``` 
+
+## Stress label transfer
+This uses the same workflow as for the control data.
+
+```{r STRESS: Read in pre-processed query data}
+BNST.stress <- readRDS(file = "C:/shares/btrainor/Sinead/GitHub/BNST.stress.rds")
+
+# Recompute RNA assay
+DefaultAssay(BNST.stress) <- "RNA"
+BNST.stress <- NormalizeData(BNST.stress, verbose = FALSE)
+BNST.stress <- FindVariableFeatures(BNST.stress, nfeatures = 3000, verbose = FALSE)
+BNST.stress <- ScaleData(BNST.stress, verbose = FALSE)
+BNST.stress <- RunPCA(BNST.stress, verbose = FALSE)
+```
+
+*See output in BNST.stress_celltype_mapping_plots.pdf*
+
+```{r STRESS: Map query data to reference data}
+
+anchors <- FindTransferAnchors(reference = allen_ref, query = BNST.stress, normalization.method = "LogNormalize", 
+                               dims = 1:50, reference.reduction = "pca") 
+# 8012 anchors found
+BNST.stress <- MapQuery(anchorset = anchors, reference = allen_ref, query = BNST.stress, 
+                        refdata = list(division = "division", class = "class"),
+                        reference.reduction = "pca", reduction.model = "umap")
+
+# Visualize query cells alongside reference 
+p6a <- DimPlot(allen_ref, reduction = "umap", group.by = "division", label = TRUE, label.size = 3,
+               repel = TRUE) + NoLegend() + ggtitle("Reference Divisions")
+p6b <- DimPlot(BNST.stress, reduction = "ref.umap", group.by = "predicted.division", label = TRUE,
+               label.size = 3, repel = TRUE) + NoLegend() + ggtitle("BNST Stress Divisions")
+print(p6a + p6b)
+p7a <- DimPlot(allen_ref, reduction = "umap", group.by = "class", label = TRUE, label.size = 3,
+               repel = TRUE) + NoLegend() + ggtitle("Reference Classes")
+p7b <- DimPlot(BNST.stress, reduction = "ref.umap", group.by = "predicted.class", label = TRUE,
+               label.size = 3, repel = TRUE) + NoLegend() + ggtitle("BNST Stress Classes")
+print(p7a + p7b)
+
+# More visualizing
+## Create UMAP plots for each Seurat object and extract UMAP coordinates
+umap_coords1 <- as.data.frame(Embeddings(allen_ref, reduction = "umap"))  
+umap_coords2 <- as.data.frame(Embeddings(BNST.stress, reduction = "ref.umap"))
+colnames(umap_coords2) <- c("umap_1", "umap_2")
+umap_coords1$origin = "Reference Data"
+umap_coords2$origin = "BNST Stress Data"
+
+## Merge the UMAP coordinates based on common identifier
+merged_umap_coords <- rbind(umap_coords1, umap_coords2)
+merged_umap_coords$origin <- factor(merged_umap_coords$origin, levels = c("BNST Stress Data","Reference Data"))
+merged_umap_coords <- merged_umap_coords %>% arrange(desc(origin))
+
+## Plot the overlay of UMAPs
+p8 <- ggplot(data = merged_umap_coords, aes(x = umap_1, y = umap_2, color = origin)) +
+  geom_point(size = 0.5) +
+  scale_color_manual(values = c("red", "black")) +
+  theme_cowplot()
+print(p8)
+
+```
+
+### By-cluster voting: division
+This uses the same approach as for the control data.
+
+*See output in BNST.stress_by-cluster_voting_plots.pdf*
+
+```{r STRESS: By-cluster voting: division}
+
+print(unique(BNST.stress$predicted.division)) 
+```
+
+There were 7 unique divisions assigned through data mapping.
+
+```{r STRESS: clustering for division, results = 'hide'}
+
+# try a range of clustering resolutions
+res.vec <- c(0.01, 0.02, 0.03, 0.04, 0.05)
+BNST.stress <- FindClusters(BNST.stress, graph.name = "SCT_snn", resolution = res.vec)
+```
+
+res0.02 gave 7 clusters, so I used this. 
+
+```{r STRESS: table, histogram}
+
+# make table with number of cells with each predicted divisions for each cluster
+clust_count_table_division <- BNST.stress@meta.data %>% group_by(SCT_snn_res.0.02, predicted.division) %>% dplyr::count()
+pct_df <- clust_count_table_division %>%
+  group_by(SCT_snn_res.0.02) %>%
+  mutate(max_n = max(n)) %>%   # find number of cells belonging to most popular division in each cluster
+  ungroup() %>%
+  group_by(SCT_snn_res.0.02, max_n) %>%
+  summarise(percentage = max(n) / sum(n) * 100) %>%   # compute cluster purity 
+  ungroup()
+
+hist(
+  pct_df$percentage,
+  main = "Histogram of Cluster Purity (res.0.02)",
+  xlab = "Purity (% of cells in dominant predicted division)",
+  ylab = "Number of clusters"
+)
+```
+
+The histogram shows high cluster purity at this resolution.
+
+```{r STRESS: by-cluster voting for division continued}
+
+# table of most popular division for each cluster
+max_table <- clust_count_table_division %>% group_by(SCT_snn_res.0.02) %>% slice_max(n) %>% ungroup()  
+max_map <- setNames(max_table$predicted.division, nm=max_table$SCT_snn_res.0.02)
+
+# assign most popular division to each cluster
+BNST.stress@meta.data$pred.div.res.0.02 <- max_map[BNST.stress@meta.data$SCT_snn_res.0.02]
+BNST.stress@meta.data$pred.div.res.0.02 <- gsub(" ", "_" ,BNST.stress@meta.data$pred.div.res.0.02)
+
+# visualize 
+p9 <- DimPlot(BNST.stress, reduction = "umap", group.by = "pred.div.res.0.02", label = TRUE,
+             pt.size=1, label.size = 3, repel = TRUE, label.box = TRUE) + NoLegend() + 
+  ggtitle("BNST stress Transferred Labels by Division, res.0.02")
+print(p9)
+# only 5 of the 7 divisions apply
+```
+
+### By-cluster voting: class
+
+```{r STRESS: By-cluster voting: class}
+
+print(unique(BNST.stress$predicted.class)) 
+```
+
+There were 17 unique classes assigned through data mapping.
+
+```{r STRESS: clustering for class, results = 'hide'}
+
+# try a range of clustering resolutions
+res.vec <- c(0.1, 0.2, 0.3, 0.4, 0.5)
+BNST.stress <- FindClusters(BNST.stress, graph.name = "SCT_snn", resolution = res.vec)
+```
+
+res.0.1 gives 17 clusters, so I picked this.
+
+```{r STRESS: table, histogram}
+
+# make table with number of cells with each predicted class for each cluster
+clust_count_table_class <- BNST.stress@meta.data %>% group_by(SCT_snn_res.0.1, predicted.class) %>% dplyr::count()
+pct_df <- clust_count_table_class %>%
+  group_by(SCT_snn_res.0.1) %>%
+  mutate(max_n = max(n)) %>%   # find number of cells belonging to most popular class in each cluster
+  ungroup() %>%
+  group_by(SCT_snn_res.0.1, max_n) %>%
+  summarise(percentage = max(n) / sum(n) * 100) %>%   # compute cluster purity 
+  ungroup()
+
+hist(
+  pct_df$percentage,
+  main = "Histogram of Cluster Purity (res0.1)",
+  xlab = "Purity (% of cells in dominant predicted class)",
+  ylab = "Number of clusters"
+)
+```
+
+Clusters 2, 6, 9, 10, 11, 12, 14, and 15 have <60% purity, so I inspected these clusters to confirm that they didn't need to be re-clustered to add more information. If a cluster was somewhat evenly split between neuronal and non-neuronal cells, I reclustered it to help me identify neurons more accurately.
+
+```{r STRESS: inspect low-purity clusters}
+
+cluster2 <- subset(BNST.stress, SCT_snn_res.0.1 %in% "2") 
+table(cluster2$predicted.class) # almost all are either CNU-HYa GABA or just CNU GABA --> don't need to recluster
+
+cluster6 <- subset(BNST.stress, SCT_snn_res.0.1 %in% "6") 
+table(cluster6$predicted.class) 
+# out of 4000 cells 2300 are oligo and 850 are astro, about 670 are GABA neurons. So 80% are glial --> don't recluster
+
+cluster9 <- subset(BNST.stress, SCT_snn_res.0.1 %in% "9") 
+table(cluster9$predicted.class) # 50% CNU-HYa GABA, 27% immune --> recluster
+
+cluster10 <- subset(BNST.stress, SCT_snn_res.0.1 %in% "10") 
+table(cluster10$predicted.class) # almost all are either CNU-HYa GABA or just CNU GABA --> don't recluster
+
+cluster11 <- subset(BNST.stress, SCT_snn_res.0.1 %in% "11") 
+table(cluster11$predicted.class) # 50% CNU-HYa GABA, 40% astro --> recluster
+
+cluster14 <- subset(BNST.stress, SCT_snn_res.0.1 %in% "14") 
+table(cluster14$predicted.class) # 50% CNU-HYa GABA, 35% vascular --> recluster
+
+cluster15 <- subset(BNST.stress, SCT_snn_res.0.1 %in% "15") 
+table(cluster15$predicted.class) # almost all are either CNU-HYa GABA (252) or just CNU GABA (159) --> don't recluster
+```
+
+```{r STRESS: recluster clusters 9, 11, 14}
+
+cells_to_refine <- WhichCells(BNST.stress, expression = SCT_snn_res.0.1 %in% c("9", "11", "14"))
+clusters_to_refine <- subset(BNST.stress, cells = cells_to_refine)
+colnames(clusters_to_refine@meta.data)[colnames(clusters_to_refine@meta.data) == "SCT_snn_res.0.1"] <- "parent_clustering"
+
+DefaultAssay(clusters_to_refine) <- "SCT"
+clusters_to_refine <- RunPCA(clusters_to_refine, features = VariableFeatures(BNST.stress_nonfilt))
+clusters_to_refine <- RunHarmony(clusters_to_refine, assay.use = "SCT", group.by.vars = "orig.ident")
+ElbowPlot(clusters_to_refine, ndims = 50)
+
+refined_list <- lapply(unique(clusters_to_refine$parent_clustering), function(parent_cluster){
+  sub_cells <- WhichCells(clusters_to_refine, expression = parent_clustering == parent_cluster)
+  sub_obj <- subset(clusters_to_refine, cells = sub_cells)
+  sub_obj <- RunPCA(sub_obj, features = VariableFeatures(sub_obj))
+  sub_obj <- FindNeighbors(sub_obj, dims = 1:10)   # use top 10 PCs for local structure
+  sub_obj <- FindClusters(sub_obj, resolution = 0.1)
+  sub_obj$refined_clustering <- paste0(parent_cluster, "_sub", Idents(sub_obj))
+  refined_vec <- sub_obj$refined_clustering  # return as named vector (cell names preserved)
+  names(refined_vec) <- colnames(sub_obj)
+  return(refined_vec)
+})
+refined_all <- unlist(refined_list)
+clusters_to_refine$refined_clustering <- refined_all[colnames(clusters_to_refine)]
+
+# plot UMAPs to check
+cluster11 <- subset(clusters_to_refine, parent_clustering == "11")
+cluster11$refined_clustering <- factor(cluster11$refined_clustering)
+DimPlot(cluster11, reduction = "umap", group.by = "refined_clustering", label = FALSE) # 4 subclusters, look decent
+
+cluster9 <- subset(clusters_to_refine, parent_clustering == "9")
+cluster9$refined_clustering <- factor(cluster9$refined_clustering)
+DimPlot(cluster9, reduction = "umap", group.by = "refined_clustering", label = FALSE) # 5 subclusters, look ok
+
+cluster14 <- subset(clusters_to_refine, parent_clustering == "14")
+cluster14$refined_clustering <- factor(cluster14$refined_clustering)
+DimPlot(cluster14, reduction = "umap", group.by = "refined_clustering", label = FALSE) # 2 subclusters, look very mixed
+
+# create metadata column in parent object for subclusters
+BNST.stress$refined_subcluster <- NA
+BNST.stress$refined_subcluster[cells_to_refine] <- clusters_to_refine$refined_clustering
+BNST.stress$final_cluster_label <- ifelse(
+  is.na(BNST.stress$refined_subcluster),
+  as.character(BNST.stress$SCT_snn_res.0.1),
+  as.character(BNST.stress$refined_subcluster)
+)
+```
+
+```{r STRESS: table, histogram}
+
+clust_count_table_class2 <- BNST.stress@meta.data %>% group_by(final_cluster_label, predicted.class) %>% dplyr::count() 
+pct_df2 <- clust_count_table_class3 %>%
+  group_by(final_cluster_label) %>%
+  mutate(max_n = max(n)) %>%   # find number of cells belonging to most popular class in each cluster
+  ungroup() %>%
+  group_by(final_cluster_label, max_n) %>%
+  summarise(percentage = max(n) / sum(n) * 100) %>%   # compute cluster purity 
+  ungroup()
+
+hist(
+  pct_df2$percentage,
+  main = "Histogram of Cluster Purity (refined)",
+  xlab = "Purity (% of cells in dominant predicted class)",
+  ylab = "Number of clusters"
+)
+```
+
+Clusters with <60% purity: 2 (ok), 6 (ok), 9sub0, 9sub1, 10 (ok), 12 (ok), 15 (ok)
+
+9sub0 has 1212 cells, 9sub1 has 443 --> less than 2% of entire data, so ok to throw out. Also, the most common label is Oligo/Immune, which I'm not analyzing here anyways.
+
+```{r throw out cluster 9}
+
+BNST.stress_nonfilt <- subset(BNST.stress_nonfilt, final_cluster_label %in% c("9_sub0", "9_sub1"), invert = TRUE) 
+# don't need to renormalize since removing so few cells
+```
+
+```{r STRESS: by-cluster voting for class continued}
+
+max_map <- setNames(max_table$predicted.class, nm=max_table$final_cluster_label)
+
+# assign most popular class to each cluster
+BNST.stress@meta.data$pred.class.finalized <- max_map[BNST.stress@meta.data$final_cluster_label]
+BNST.stress@meta.data$pred.class.finalized <- gsub(" ", "_" ,BNST.stress@meta.data$pred.class.finalized)
+
+BNST.stress$pred.class.finalized[BNST.stress$SCT_snn_res.0.1 %in% "6"] <- "glial"
+BNST.stress$pred.class.finalized[BNST.stress$SCT_snn_res.0.1 %in% "12"] <- "ambiguous GABA/glut"
+
+# visualize 
+p10 <- DimPlot(BNST.stress, reduction = "umap", group.by = "pred.class.finalized", label = TRUE,
+              pt.size=1, label.size = 3, repel = TRUE, label.box = TRUE) + NoLegend() + 
+  ggtitle("BNST Stress Transferred Labels by Class")
+print(p10)
+```
+
+### Save progress
+
+``` {r STRESS: Save progress}
+
+# remove irrelevant metadata columns
+BNST.stress@meta.data <- BNST.stress@meta.data[ , !(colnames(BNST.stress@meta.data) %in% 
+      c("condition", "DoubletStatus", "SCT_snn_res.0.01", "SCT_snn_res.0.02", 
+      "SCT_snn_res.0.04", "SCT_snn_res.0.05", "SCT_snn_res.0.06", "SCT_snn_res.0.08", "SCT_snn_res.0.1", 
+      "predicted.division.score", "predicted.class.score"))]
+
+# clean up recursions before saving
+BNST.stress@tools <- list()
+BNST.stress@anchors <- NULL
+if ("ref.umap" %in% names(BNST.stress@reductions)) {
+  BNST.stress=@reductions$ref.umap@misc$model <- NULL
+}
+if ("umap" %in% names(BNST.stress@reductions)) {
+  BNST.stress@reductions$umap@misc$model <- NULL
+}
+BNST.stress@reductions$ref.umap@misc <- list()
+BNST.stress@reductions$umap@misc <- list()
+BNST.stress@misc <- list()
+
+saveRDS(BNST.stress, file = "C:/shares/btrainor/Sinead/GitHub/BNST.stress_mapped.rds")
+```
