@@ -1,0 +1,585 @@
+---
+title: 'BNST 2025 Analysis: All Neurons'
+author: "Sinead Archdeacon"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+date: "2026-03-22"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      message = FALSE,  
+                      warning = FALSE
+                      )
+```
+
+## Introduction
+
+The third step of this snRNA-seq analysis is to analyze all neurons and identify clusters of transcriptionally similar subtypes.
+
+**Note:** I combined control and stress data again at this step.
+
+```{r Environment setup}
+
+# Increase capacity of R: necessary at the start of every session
+options(future.globals.maxSize = 60000 * 1024^2)
+
+# Load libraries
+library(Seurat)
+library(dplyr)
+library(ggplot2)
+library(sctransform) 
+library(harmony)
+library(presto)
+```
+
+## Control neurons
+
+### Read in the data
+
+```{r Read in data}
+
+BNST.controls <- readRDS(file = "C:/shares/btrainor/Sinead/GitHub/BNST.controls_mapped.rds") # 90,729 cells
+```
+
+### Check for low-quality clusters
+Check that all clusters have > 100 cells total and multiple cells from each sample. Inspect any clusters that appear very small or scattered away from the center of the UMAP.
+
+*See output in BNST.controls_nonfilt_mapped_qc_plots.pdf*
+
+```{r Cluster}
+
+# cluster to get 30-40 clusters
+BNST.controls_nonfilt_mapped <- FindClusters(BNST.controls_nonfilt_mapped, graph.name = "SCT_snn", resolution = 0.5) 
+DimPlot(BNST.controls_nonfilt_mapped, reduction = "umap", group.by = "SCT_snn_res.0.5", label = TRUE) + ggtitle("BNST Controls UMAP") + theme(legend.position = "none")
+```
+
+### Check QC metrics again
+*See output in BNST.controls_nonfilt_mapped_qc_plots.pdf*
+
+```{r QC}
+
+FeaturePlot(BNST.controls,
+            reduction = "umap",
+            features = c("nCount_RNA", "nFeature_RNA", "percent.ribo"),
+            pt.size = 0.4,
+            min.cutoff = "q10",
+            max.cutoff = "q90",
+            label = TRUE)
+
+# make a contam_comments metadata column to see how many cells from these problematic clusters show up in neurons subset
+BNST.controls_nonfilt_mapped@meta.data$contam_comments <- "NA"
+BNST.controls_nonfilt_mapped@meta.data$contam_comments[BNST.controls_nonfilt_mapped$SCT_snn_res.0.5 %in% 
+              c("0", "2", "6", "9", "21")] <- "low nCount" #also corresponds to low n_Feature and high percent.ribo
+BNST.controls_nonfilt_mapped@meta.data$contam_comments[BNST.controls_nonfilt_mapped$SCT_snn_res.0.5 %in% 
+              "4"] <- "low nCount and thalamic" #also corresponds to low n_Feature and high percent.ribo
+
+```
+
+### Check for contamination from neighboring brain regions
+
+```{r check for contamination}
+
+# dopamine receptors (striatum markers)
+FeaturePlot(BNST.controls, reduction = "umap", features = c("Drd1", "Drd2"), label = TRUE) 
+
+# olfactory tubercle marker
+FeaturePlot(BNST.controls, reduction = "umap", features = "Drd3", label = TRUE)
+
+# thalamic marker
+FeaturePlot(BNST.controls, reduction = "umap", features = "Tcf7l1", label = TRUE)
+
+# cortical/hippocampal GABAergic interneuron markers
+FeaturePlot(BNST.controls, reduction = "umap", features = c("Dlx1","Dlx2"), label = TRUE)
+
+# striatal MSN markers (Welch paper says BNST may have MSNs, so this may not be contamination)
+FeaturePlot(BNST.controls, reduction = "umap", features = c("Drd1", "Drd2", "Adora2a", "Ppp1r1b"), label = TRUE)     
+
+BNST.controls_nonfilt_mapped@meta.data$contam_comments[BNST.controls_nonfilt_mapped$SCT_snn_res.0.5 %in% 
+                                                      "24"] <- "olfactory"
+BNST.controls_nonfilt_mapped@meta.data$contam_comments[BNST.controls_nonfilt_mapped$SCT_snn_res.0.5 %in% 
+                                                      c("10", "12", "16", "18")] <- "thalamic?"
+BNST.controls_nonfilt_mapped@meta.data$contam_comments[BNST.controls_nonfilt_mapped$SCT_snn_res.0.5 %in% "8"] <- "MSN?"
+```
+
+### Try subsetting control neurons to see contamination prevalence
+*See output in BNST.controls_neurons_prefilt_umap.pdf*
+
+```{r test subset control neurons}
+
+BNST.control_neurons_test <- subset(BNST.controls,
+                      subset = (pred.div.res.0.05 %in% c("3_PAL-sAMY-TH-HY-MB-HB_neuronal", "2_Subpallium_GABAergic")))
+table(BNST.control_neurons_test$contam_comments) 
+
+# re-normalize RNA assay 
+DefaultAssay(BNST.control_neurons_test) <- "RNA"
+BNST.control_neurons_test <- NormalizeData(BNST.control_neurons_test, normalization.method = "LogNormalize", 
+                                           scale.factor = 10000)
+
+# Rerun SCTransform on neuron subset
+BNST.control_neurons_test <- SCTransform(BNST.control_neurons_test, method = "glmGamPoi", 
+                                    return.only.var.genes = FALSE, 
+                                    variable.features.n = 3000, 
+                                    verbose = FALSE) 
+
+BNST.control_neurons_test <- RunPCA(BNST.control_neurons_test, npcs = 50) 
+BNST.control_neurons_test <- RunHarmony(BNST.control_neurons_test, assay.use = "SCT", group.by.vars = "orig.ident")
+ElbowPlot(BNST.control_neurons_test, ndims= 50)
+BNST.control_neurons_test <- FindNeighbors(BNST.control_neurons_test, reduction = "harmony", dims = 1:40) 
+BNST.control_neurons_test <- FindClusters(BNST.control_neurons_test, resolution = 0.3) # 22 clusters
+BNST.control_neurons_test <- RunUMAP(BNST.control_neurons_test, reduction = "harmony", dims = 1:40)
+
+DimPlot(BNST.control_neurons_test, reduction = "umap", group.by = "contam_comments", label = TRUE) 
+FeaturePlot(BNST.control_neurons_test, reduction = "umap", features = "Mobp", label = TRUE) 
+```
+
+Problematic clusters account for 30,480 out of 65,723 neurons
+The low nCount cluster has high Mobp expression (oligodendrocyte contamination)
+
+### Remove low-quality or contaminant clusters
+
+```{r filter}
+
+BNST.controls_filt <- subset(BNST.controls, SCT_snn_res.0.5 %in% 
+                            c("0", "2", "4", "6", "9", "10", "12", "16", "18", "21", "24"), invert = TRUE)
+table(BNST.controls_filt$contam_comments) # check that there is nothing besides "NA" or "MSN?" remaining
+# 46,096 cells remaining
+```
+
+### Subset for control neurons
+
+```{r subset for neurons}
+
+BNST.control_neurons <- subset(BNST.controls_filt, pred.div.res.0.05 %in% "3_PAL-sAMY-TH-HY-MB-HB_neuronal") 
+# no subpallium GABAergic neurons present 
+# 35,243 neurons
+
+# re-normalize RNA assay 
+DefaultAssay(BNST.control_neurons) <- "RNA"
+BNST.control_neurons <- NormalizeData(BNST.control_neurons, normalization.method = "LogNormalize", scale.factor = 10000)
+```
+
+## Stress neurons
+
+### Read in the data
+
+```{r Read in data}
+
+BNST.stress <- readRDS(file = "C:/shares/btrainor/Sinead/GitHub/BNST.stress_mapped.rds") # 150,378 cells
+```
+
+### Check for low-quality clusters
+*See output in BNST.stress_nonfilt_mapped_qc_plots.pdf*
+
+```{r Cluster}
+
+# cluster to get 30-40 clusters
+BNST.stress <- FindClusters(BNST.stress, graph.name = "SCT_snn", resolution = 0.5) # gives 31 clusters
+DimPlot(BNST.stress, reduction = "umap", group.by = "SCT_snn_res.0.5", label = TRUE) + ggtitle("BNST Stress UMAP") + theme(legend.position = "none")
+```
+
+Cluster 30 only has 45 cells, so it can be thrown out.
+Cluster 22 has only 4 cells from fems2 and 1 cell from males2 --> throw out
+Cluster 23 has only 2-4 cells from 3 of the samples --> throw out
+Cluster 28 has no cells from 2 of the samples --> throw out
+
+### Check QC metrics again
+*See output in BNST.stress_nonfilt_mapped_qc_plots.pdf*
+
+```{r QC}
+
+FeaturePlot(BNST.stress,
+            reduction = "umap",
+            features = c("nCount_RNA", "nFeature_RNA", "percent.ribo"),
+            pt.size = 0.4,
+            min.cutoff = "q10",
+            max.cutoff = "q90",
+            label = TRUE)
+
+BNST.stress@meta.data$contam_comments <- "NA"
+BNST.stress@meta.data$contam_comments[BNST.stress$SCT_snn_res.0.5 %in% 
+                              c("0", "1", "2", "3", "5", "8")] <- "low nCount" # also low n_Feature, high percent.ribo
+```
+
+### Check for contamination from neighboring brain regions
+
+```{r check for contamination}
+
+# dopamine receptors (striatum markers)
+FeaturePlot(BNST.stress, reduction = "umap", features = c("Drd1", "Drd2"), label = TRUE) 
+
+# olfactory tubercle marker
+FeaturePlot(BNST.stress, reduction = "umap", features = "Drd3", label = TRUE)
+
+# thalamic marker
+FeaturePlot(BNST.stress, reduction = "umap", features = "Tcf7l1", label = TRUE)
+
+# cortical/hippocampal GABAergic interneuron markers
+FeaturePlot(BNST.stress, reduction = "umap", features = c("Dlx1","Dlx2"), label = TRUE)
+
+# striatal MSN markers 
+FeaturePlot(BNST.stress, reduction = "umap", features = c("Drd1", "Drd2", "Adora2a", "Ppp1r1b"), label = TRUE) 
+
+BNST.stress_nonfilt_mapped@meta.data$contam_comments[BNST.stress_nonfilt_mapped$SCT_snn_res.0.5 %in% 
+                                    c("4", "7", "13")] <- "partial possible contam"
+```
+
+### Try subsetting stress neurons to see contamination prevalence
+*See output in BNST.stress_neurons_prefilt_umap.pdf*
+
+```{r test subset stress neurons}
+
+BNST.stress_neurons_test <- subset(BNST.stress,
+                               subset = (pred.div.res.0.02 %in% c("3_PAL-sAMY-TH-HY-MB-HB_neuronal")))
+table(BNST.stress_neurons_test$contam_comments) 
+
+# re-normalize RNA assay 
+DefaultAssay(BNST.stress_neurons_test) <- "RNA"
+BNST.stress_neurons_test <- NormalizeData(BNST.stress_neurons_test, normalization.method = "LogNormalize", 
+                                          scale.factor = 10000)
+
+# Rerun SCTransform on neuron subset
+BNST.stress_neurons_test <- SCTransform(BNST.stress_neurons_test, method = "glmGamPoi", 
+                                    return.only.var.genes = FALSE, 
+                                    variable.features.n = 3000, 
+                                    verbose = FALSE) 
+
+BNST.stress_neurons_test <- RunPCA(BNST.stress_neurons_test, npcs = 50) 
+BNST.stress_neurons_test <- RunHarmony(BNST.stress_neurons_test, assay.use = "SCT", group.by.vars = "orig.ident")
+ElbowPlot(BNST.stress_neurons_test, ndims= 50)
+BNST.stress_neurons_test <- FindNeighbors(BNST.stress_neurons_test, reduction = "harmony", dims = 1:40) 
+BNST.stress_neurons_test <- FindClusters(BNST.stress_neurons_test, resolution = 0.3) #23 clusters
+BNST.stress_neurons_test <- RunUMAP(BNST.stress_neurons_test, reduction = "harmony", dims = 1:40)
+
+DimPlot(BNST.stress_neurons_test, reduction = "umap", group.by = "contam_comments", label = TRUE)
+```
+
+Problematic clusters account for 65,303 neurons out of 91,758
+Clusters 0, 1, 3, 8 should be removed
+
+### Remove low-quality or contaminant clusters
+
+```{r filter}
+
+BNST.stress_filt <- subset(BNST.stress, SCT_snn_res.0.5 %in% c(0, 1, 2, 3, 5, 8, 22, 23, 28, 30), invert = TRUE) 
+table(BNST.stress_filt$contam_comments) # check that there is nothing besides "NA" or "partial possible contam"
+# 47,326 cells remaining
+```
+
+### Subset for stress neurons
+
+```{r subset for neurons}
+
+BNST.stress_neurons <- subset(BNST.stress, pred.div.res.0.02 %in% "3_PAL-sAMY-TH-HY-MB-HB_neuronal") 
+# 40,938 neurons
+
+# re-normalize RNA assay 
+DefaultAssay(BNST.stress_neurons) <- "RNA"
+BNST.stress_neurons <- NormalizeData(BNST.stress_neurons, normalization.method = "LogNormalize", scale.factor = 10000)
+```
+
+## Merge stress and control neurons
+
+First, I merged the subsets without integration and plotted UMAPs to check for condition-driven batch effects.
+
+*See output in BNST.batch_effects_check.png*
+
+```{r Merge stress and control subsets}
+
+# add metadata column for condition 
+BNST.control_neurons$condition <- "control"
+BNST.stress_neurons$condition  <- "stress"
+
+BNST.merged_neurons <- merge(BNST.control_neurons, y = BNST.stress_neurons) # 24544 neurons total
+
+# re-run SCT
+BNST.merged_neurons <- SCTransform(BNST.merged_neurons, method = "glmGamPoi", verbose = FALSE)
+BNST.merged_neurons <- RunPCA(BNST.merged_neurons)
+BNST.merged_neurons <- RunUMAP(BNST.merged_neurons, dims = 1:40)
+DimPlot(BNST.merged_neurons, reduction = "umap", group.by = "condition") 
+```
+
+These are well-interspersed, so there are likely no condition-driven batch effects. So I can skip integration to avoid over-correction.
+
+## By-cluster DE analysis of all neurons
+
+Identify top differentially expressed genes for each cluster
+
+*See output in BNST.merged_neurons_top20_markers_by_cluster.csv*
+
+```{r by-cluster DE analysis}
+
+DimPlot(BNST.merged_neurons, reduction = "umap", group.by = "SCT_snn_res.0.3", label = FALSE) +
+  ggtitle("BNST All Neurons UMAP") + theme(legend.position = "none")
+
+BNST.merged_neurons <- PrepSCTFindMarkers(BNST.all_neurons) 
+markers_by_cluster <- FindAllMarkers(
+  BNST.merged_neurons,
+  assay = "SCT",               
+  layer = "data",              # use normalized counts in SCT assay
+  only.pos = TRUE,             # return only upregulated genes 
+  min.pct = 0.1,               # gene must be expressed in at least 10% of cells in either group
+  logfc.threshold = 0.25       # minimum log2 fold-change
+)
+
+top20_markers <- markers_by_cluster %>%
+  filter(p_val_adj < 0.05, !grepl("LOC", gene)) %>%
+  group_by(cluster) %>%
+  slice_max(order_by = avg_log2FC, n = 20) 
+top20_markers <- top20_markers %>% arrange(as.numeric(cluster))
+
+# reorder columns for clarity
+top20_markers <- top20_markers[, c("cluster", "gene", setdiff(names(top20_markers), c("cluster", "gene")))] 
+
+# save markers list
+write.csv(top20_markers, file = "C:/shares/btrainor/Sinead/GitHub/BNST.merged_neurons_top20_markers_by_cluster.csv", row.names = FALSE) 
+```
+
+I inspected individual clusters for predominant division and class.
+
+```{r inspect individual clusters}
+
+cluster0 <- subset(BNST.merged_neurons, SCT_snn_res.0.3 %in% "0") 
+table(cluster0$predicted.class) # all CNU GABA
+
+cluster1 <- subset(BNST.merged_neurons, SCT_snn_res.0.3 %in% "1") 
+table(cluster1$predicted.class) # CNU or LSX GABA
+
+cluster2 <- subset(BNST.merged_neurons, SCT_snn_res.0.3 %in% "2") 
+table(cluster2$predicted.class) # all CNU GABA
+FeaturePlot(cluster2, features = c("Cldn14", "Ninj2", "Gli2", "Rfx4")) 
+# could subcluster further and remove clusters with non-neuronal markers
+
+cluster3 <- subset(BNST.merged_neurons, SCT_snn_res.0.3 %in% "3") 
+table(cluster3$predicted.class) # all CNU GABA
+FeaturePlot(cluster3, features = "Ntsr1")
+
+cluster4 <- subset(BNST.merged_neurons, SCT_snn_res.0.3 %in% "4") 
+table(cluster4$predicted.class) # almost all CNU GABA
+FeaturePlot(cluster4, features = c("Mobp", "Mbp")) # strong expression all over, throw out this cluster
+FeaturePlot(cluster4, features = "nCount_RNA") # super low
+
+cluster5 <- subset(BNST.merged_neurons, SCT_snn_res.0.3 %in% "5") 
+table(cluster5$predicted.class) # almost all CNU GABA
+FeaturePlot(cluster5, features = c("Gal", "Tac3", "Esr1")) # Tac3 and Esr1 overlap
+
+cluster6 <- subset(BNST.merged_neurons, SCT_snn_res.0.3 %in% "6") 
+table(cluster6$predicted.class) # almost all CNU GABA
+FeaturePlot(cluster6, features = c("Sst", "Nkx2-1", "Chat")) # some Nkx2-1, not much Sst or Chat
+
+cluster7 <- subset(BNST.merged_neurons, SCT_snn_res.0.3 %in% "7") 
+table(cluster7$predicted.class) # mostly CNU-HYa Glut
+
+cluster8 <- subset(BNST.merged_neurons, SCT_snn_res.0.3 %in% "8") 
+table(cluster8$predicted.class) # almost all CNU GABA
+FeaturePlot(cluster8, features = c("Sox6", "Adarb2", "Lhx6", "Elfn1")) 
+# Sox6/Lhx6/Elfn1 are MGE markers, Adarb2 is strong CGE marker, both overlap
+# could subcluster
+
+cluster9 <- subset(BNST.merged_neurons, SCT_snn_res.0.3 %in% "9") 
+table(cluster9$predicted.class) # mostly Glut
+FeaturePlot(cluster9, features = c("Slc17a6", "Gad1", "Gad2", "Dlx1"))
+
+cluster10 <- subset(BNST.merged_neurons, SCT_snn_res.0.3 %in% "10") 
+table(cluster10$predicted.class) # almost all GABA
+FeaturePlot(cluster10, features = c("Tshz1", "Foxp2", "Eya2", "Dmrta2", "Tcf7l2")) # first 2 (MGE) strongly predominate
+
+cluster11 <- subset(BNST.merged_neurons, SCT_snn_res.0.3 %in% "11") 
+table(cluster11$predicted.class) # almost all GABA
+
+cluster12 <- subset(BNST.merged_neurons, SCT_snn_res.0.3 %in% "12") 
+table(cluster12$predicted.class) # almost all GABA
+
+cluster13 <- subset(BNST.merged_neurons, SCT_snn_res.0.3 %in% "13") 
+table(cluster13$predicted.class) # almost all GABA
+FeaturePlot(cluster13, features = c("Lhx8", "Nkx2-1", "Adarb2", "Ano1")) # overlap but Adarb2 is much stronger
+cluster13 <- PrepSCTFindMarkers(cluster13)
+cluster13 <- RunPCA(cluster13)
+cluster13 <- FindNeighbors(cluster13, dims = 1:10)
+cluster13 <- FindClusters(cluster13, res = 0.05)
+
+cluster14 <- subset(BNST.merged_neurons, SCT_snn_res.0.3 %in% "14") 
+table(cluster14$predicted.class) # almost all GABA
+table(cluster14$predicted.subclass) # mixed
+
+cluster15 <- subset(BNST.merged_neurons, SCT_snn_res.0.3 %in% "15") 
+table(cluster15$predicted.class) # majority Glut
+FeaturePlot(cluster15, features = c("Slc17a6", "Slc17a7")) # a6 prominent, a7 sparse
+
+cluster16 <- subset(BNST.merged_neurons, SCT_snn_res.0.3 %in% "16") 
+table(cluster16$predicted.class) # almost all GABA
+
+cluster17 <- subset(BNST.merged_neurons, SCT_snn_res.0.3 %in% "17") 
+table(cluster17$predicted.class) # majority Glut
+FeaturePlot(cluster17, features = c("Slc17a6", "Slc17a7")) # a6 fairly prominent, a7 very sparse
+
+cluster18 <- subset(BNST.merged_neurons, SCT_snn_res.0.3 %in% "18") 
+table(cluster18$predicted.class) 
+# 200 MOB-DG-IMN cells--> possible olfactory bulb inhibitory neuron contamination (942 cells total)
+FeaturePlot(cluster18, features = "nCount_RNA")
+
+cluster19 <- subset(BNST.merged_neurons, SCT_snn_res.0.3 %in% "19") 
+table(cluster19$predicted.class) # almost all GABA
+# QC check bc separated from rest of UMAP:
+table(cluster19$orig.ident) # all samples represented
+FeaturePlot(cluster19, features = c("nCount_RNA", "nFeature_RNA", "percent.ribo")) # looks alright, so keep for now
+
+cluster20 <- subset(BNST.merged_neurons, SCT_snn_res.0.3 %in% "20") 
+table(cluster20$predicted.class) # 237 vascular, 63 olfactory bulb out of 659 total --> throw out
+FeaturePlot(cluster20, features = "nCount_RNA") # low 
+
+cluster21 <- subset(BNST.merged_neurons, SCT_snn_res.0.3 %in% "21") 
+table(cluster21$predicted.class) # almost all GABA
+
+cluster22 <- subset(BNST.merged_neurons, SCT_snn_res.0.3 %in% "22") 
+table(cluster22$predicted.class) # all GABA
+
+cluster23 <- subset(BNST.merged_neurons, SCT_snn_res.0.3 %in% "23") 
+table(cluster23$predicted.class) # almost all GABA
+FeaturePlot(cluster23, features = c("Sox6", "Prox1")) # more Sox6 expression
+```
+
+I assigned Oxt identity to the merged neuron set before filtering further, to check that extra filtering wouldn't remove lots of Oxt neurons.
+
+```{r assign Oxt identity}
+
+DefaultAssay(BNST.merged_neurons) <- "RNA"
+counts_df <- FetchData(BNST.merged_neurons, vars = c("Oxt","Avp"), layer = "counts")
+oxt_neurons <- rownames(counts_df)[counts_df$Oxt >= 1 & counts_df$Oxt > counts_df$Avp] 
+
+BNST.merged_neurons$oxt_status <- "no" 
+BNST.merged_neurons$oxt_status[oxt_neurons] <- "yes"
+table(BNST.merged_neurons$oxt_status) #492 (0.6%  of all neurons)
+table(BNST.merged_neurons$oxt_status, BNST.merged_neurons$SCT_snn_res.0.3)
+```
+
+*Note:* Oxt >=1 gives the same result as Oxt >0 because counts can only be whole reads
+Taking out the Avp parameter only adds a few more Oxt neurons, so I kept it
+
+The Oxt neurons are spread out across all clusters, slightly enriched in cluster 9 (2.5%)
+Taking out clusters 4, 18, and 20 would take out 29 oxt neurons (out of 6296 cells removed)
+
+```{r additional round of filtering}
+
+FeaturePlot(BNST.merged_neurons, features = c("nCount_RNA", "nFeature_RNA", "percent.ribo")) 
+# clusters 4, 18, 20 account for low-quality clusters
+
+# remove non-neuronal clusters
+BNST.merged_neurons_filt <- subset(BNST.merged_neurons, SCT_snn_res.0.3 %in% c("4", "18", "20"), invert = TRUE)
+
+# don't need to renormalize/rerun SCT bc only removed 7% of cells
+
+BNST.merged_neurons_filt <- PrepSCTFindMarkers(BNST.merged_neurons_filt)
+BNST.merged_neurons_filt <- RunPCA(BNST.merged_neurons_filt, assay = "SCT")
+BNST.merged_neurons_filt <- FindNeighbors(BNST.merged_neurons_filt, dims = 1:40)
+BNST.merged_neurons_filt <- RunUMAP(BNST.merged_neurons_filt, dims = 1:40)
+```
+
+Then I labeled each cluster with the most canonical/biologically relevant marker from the top 20 DEs list.
+
+```{r label individual clusters}
+
+BNST.merged_neurons$combined_seurat_clusters[BNST.merged_neurons_filt$SCT_snn_res.0.3 %in% "0"] <- "MSN-like GABA" 
+# Ppp1r1b, Prkch, most likely GABA
+
+BNST.merged_neurons$combined_seurat_clusters[BNST.merged_neurons_filt$SCT_snn_res.0.3 %in% "1"] <- "Dlx1 Prox1 CGE GABA" 
+
+BNST.merged_neurons$combined_seurat_clusters[BNST.merged_neurons_filt$SCT_snn_res.0.3 %in% "2"] <- "Gli2 MGE GABA"
+
+BNST.merged_neurons$combined_seurat_clusters[BNST.merged_neurons_filt$SCT_snn_res.0.3 %in% "3"] <- "Ntsr1 MGE GABA"
+
+#cluster 4 thrown out (oligodendrocytes)
+
+BNST.merged_neurons$combined_seurat_clusters[BNST.merged_neurons_filt$SCT_snn_res.0.3 %in% "5"] <- "Esr1/2 Ar GABA"
+
+BNST.merged_neurons$combined_seurat_clusters[BNST.merged_neurons_filt$SCT_snn_res.0.3 %in% "6"] <- "Lhx8 Nkx2-1 MGE
+GABA" # Mcm3
+
+BNST.merged_neurons$combined_seurat_clusters[BNST.merged_neurons_filt$SCT_snn_res.0.3 %in% "7"] <- "Lhx5 VGLUT2 Glut" 
+# Slc17a6
+
+BNST.merged_neurons$combined_seurat_clusters[BNST.merged_neurons_filt$SCT_snn_res.0.3 %in% "8"] <- "Lhx6 Sox6 MGE GABA" 
+# Sox6,Adarb2
+
+BNST.merged_neurons$combined_seurat_clusters[BNST.merged_neurons_filt$SCT_snn_res.0.3 %in% "9"] <- "Sim1 Hypothalamic-like Glut"  # Sim1, Sim2, Adcyap1, Onecut1 & Neurod1
+
+BNST.merged_neurons$combined_seurat_clusters[BNST.merged_neurons_filt$SCT_snn_res.0.3 %in% "10"] <- "Foxp2 Tshz1 MGE GABA" 
+
+BNST.merged_neurons$combined_seurat_clusters[BNST.merged_neurons_filt$SCT_snn_res.0.3 %in% "11"] <- "Foxp2 Nkx2-1 MGE GABA" 
+
+BNST.merged_neurons$combined_seurat_clusters[BNST.merged_neurons_filt$SCT_snn_res.0.3 %in% "12"] <- "Tacr3 Ngf GABA"
+
+BNST.merged_neurons$combined_seurat_clusters[BNST.merged_neurons_filt$SCT_snn_res.0.3 %in% "13"] <- "Adarb2 CGE GABA" 
+# might be mixed
+
+BNST.merged_neurons$combined_seurat_clusters[BNST.merged_neurons_filt$SCT_snn_res.0.3 %in% "14"] <- "Sst MGE GABA" 
+# Crhbp, Maf
+
+BNST.merged_neurons$combined_seurat_clusters[BNST.merged_neurons_filt$SCT_snn_res.0.3 %in% "15"] <- "Tcf7l2 Thalamic-like Glut" 
+
+BNST.merged_neurons$combined_seurat_clusters[BNST.merged_neurons_filt$SCT_snn_res.0.3 %in% "16"] <- "Pvalb MGE GABA" 
+# Pvalb, Kcnmb4
+
+BNST.merged_neurons$combined_seurat_clusters[BNST.merged_neurons_filt$SCT_snn_res.0.3 %in% "17"] <- "Calb2 Glut"
+# cluster 18 thrown out (MOB contamination)
+
+BNST.merged_neurons$combined_seurat_clusters[BNST.merged_neurons_filt$SCT_snn_res.0.3 %in% "19"] <- "Chat GABA" 
+# cholinergic can be MGE or CGE
+
+#cluster 20 thrown out (vascular) 
+
+BNST.merged_neurons$combined_seurat_clusters[BNST.merged_neurons_filt$SCT_snn_res.0.3 %in% "21"] <- "Crh GABA" 
+# Impg1, Scn5a
+
+BNST.merged_neurons$combined_seurat_clusters[BNST.merged_neurons_filt$SCT_snn_res.0.3 %in% "22"] <- "VMAT2 GABA" 
+# Slc18a2, Ebf1
+
+BNST.merged_neurons$combined_seurat_clusters[BNST.merged_neurons_filt$SCT_snn_res.0.3 %in% "23"] <- "Hcrtr2 Mixed GABA" # Sox6, Prox1
+```
+
+*See output in BNST.merged_neurons_labeled3.pdf*
+
+``` {r figure}
+
+# create legend labels
+BNST.merged_neurons$SCT_snn_res.0.3 <- as.numeric(as.character(BNST.merged_neurons$SCT_snn_res.0.3))
+Idents(BNST.merged_neurons) <- "SCT_snn_res.0.3"
+BNST.merged_neurons$legend_label <- paste0(
+  BNST.merged_neurons$SCT_snn_res.0.3, " - ",
+  BNST.merged_neurons$combined_seurat_clusters)
+
+meta_df <- BNST.merged_neurons@meta.data
+ordered_levels <- meta_df %>%
+  arrange(as.numeric(SCT_snn_res.0.3)) %>%   
+  pull(legend_label) %>%
+  unique()
+BNST.merged_neurons$legend_label <- factor(
+  BNST.merged_neurons$legend_label,
+  levels = ordered_levels)
+
+# center legend labels
+centers <- Embeddings(BNST.merged_neurons, "umap") %>%
+  as.data.frame() %>%
+  cbind(cluster = Idents(BNST.merged_neurons)) %>%
+  group_by(cluster) %>%
+  summarise(umap_1 = mean(umap_1), umap_2 = mean(umap_2))
+
+DimPlot(
+  BNST.merged_neurons, reduction = "umap", group.by = "legend_label", label = FALSE) + ggtitle("BNST Neuron Subtypes") +
+  theme(legend.position = "right",
+        legend.text = element_text(size = 10),
+        legend.key.size = unit(1, "lines")) +
+        guides(color = guide_legend(ncol = 1,
+        override.aes = list(size = 3))) +
+  geom_text(data = centers,
+    aes(x = umap_1, y = umap_2, label = cluster),
+    color = "black",
+    size = 4)
+
+```
+
+``` {save progress}
+saveRDS(BNST.merged_neurons, file = "C:/shares/btrainor/Sinead/GitHub/BNST.merged_neurons_labeled.rds") 
+```
