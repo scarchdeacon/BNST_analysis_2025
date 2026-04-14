@@ -1,0 +1,157 @@
+---
+title: "BNST 2025 Analysis: Cluster 9"
+author: "Sinead Archdeacon"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+date: "2026-03-25"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+This section focuses on analysis of cluster 9, which had the highest expression of Oxt and PVN markers of all the neuron subtype clusters.
+
+```{r Environment setup}
+
+# Increase capacity of R: necessary at the start of every session
+options(future.globals.maxSize = 60000 * 1024^2)
+
+# Load libraries
+library(Seurat)
+library(dplyr)
+library(ggplot2)
+library(sctransform) 
+library(harmony)
+```
+
+## Read in the data
+
+```{r Read in data}
+
+BNST.merged_neurons <- readRDS(file = "C:/shares/btrainor/Sinead/GitHub/BNST.merged_neurons.rds")
+```
+
+## Inspect Sim1 expression
+*See output in BNST.clus9_vlnplot.pdf*
+
+```{r Sim1 expression}
+
+# check Sim1 expression across all neurons
+BNST.merged_neurons$SCT_snn_res.0.3 <- as.numeric(as.character(BNST.merged_neurons$SCT_snn_res.0.3))
+DefaultAssay(BNST.merged_neurons)
+VlnPlot(BNST.merged_neurons, features = "Sim1", group.by = "SCT_snn_res.0.3", pt.size = 0) + 
+  ylab("Expression") + xlab("Cluster") + ggtitle("Sim1") + theme(plot.title = element_text(size = 30, face = "bold"))
+```
+
+## Subset cluster 9
+
+```{r subset cluster 9}
+
+BNST.neurons_cluster9 <- subset(BNST.merged_neurons, legend_label %in% "9 - Sim1 Hypothalamic-like Glut")
+
+# re-normalize and rerun SCT on the subset
+DefaultAssay(BNST.neurons_cluster9) <- "RNA"
+BNST.neurons_cluster9 <- NormalizeData(BNST.neurons_cluster9, assay = "RNA") 
+
+BNST.neurons_cluster9 <- SCTransform(BNST.neurons_cluster9, method = "glmGamPoi", 
+                                    return.only.var.genes = FALSE, 
+                                    variable.features.n = 3000, 
+                                    verbose = FALSE) 
+
+BNST.neurons_cluster9 <- RunPCA(BNST.neurons_cluster9, npcs = 50, verbose = FALSE) 
+ElbowPlot(BNST.neurons_cluster9, ndims= 50) 
+BNST.neurons_cluster9 <- FindNeighbors(BNST.neurons_cluster9, reduction = "pca", dims = 1:10) 
+BNST.neurons_cluster9 <- FindClusters(BNST.neurons_cluster9, resolution = 0.12) 
+BNST.neurons_cluster9 <- RunUMAP(BNST.neurons_cluster9, reduction = "pca", dims = 1:10)
+
+DimPlot(BNST.neurons_cluster9, reduction = "umap", group.by = "SCT_snn_res.0.12")
+DimPlot(BNST.neurons_cluster9, reduction = "umap", group.by = c("sex", "condition", "orig.ident"))
+```
+
+## By-cluster DE analysis for cluster 9
+
+I ran DE analysis on just the cluster 9 subclusters, and labeled each subcluster with a biologically relevant marker gene picked from the list of top 20 marker genes.
+
+*See output in BNST.neurons_cluster9_top20_markers_by_cluster.csv*
+
+```{r cluster 9 subcluster by-cluster DE analysis}
+
+DefaultAssay(BNST.neurons_cluster9) = "SCT"
+BNST.neurons_cluster9 <- PrepSCTFindMarkers(BNST.neurons_cluster9) 
+markers_by_cluster <- FindAllMarkers(
+  BNST.neurons_cluster9,
+  assay = "SCT",               
+  layer = "data",              # use normalized counts in SCT assay
+  only.pos = TRUE,             # return only upregulated genes 
+  min.pct = 0.1,               # gene must be expressed in at least 10% of cells in either group
+  logfc.threshold = 0.25       # minimum log2 fold-change
+)
+
+top20_markers <- markers_by_cluster %>%
+  filter(p_val_adj < 0.05, !grepl("LOC", gene)) %>%
+  group_by(cluster) %>%
+  slice_max(order_by = avg_log2FC, n = 20) 
+top20_markers <- top20_markers %>% arrange(as.numeric(cluster))
+
+# reorder columns for clarity
+top20_markers <- top20_markers[, c("cluster", "gene", setdiff(names(top20_markers), c("cluster", "gene")))] 
+
+write.csv(top20_markers, file = "C:/shares/btrainor/Sinead/GitHub/BNST.neurons_cluster9_top20_markers_by_cluster.csv", row.names = FALSE) 
+```
+
+Then I labeled each cluster with a biologically relevant DE from the top 20 list.
+*See output in figures/BNST.neurons_cluster9_umap_labeled.pdf*
+
+```{r continue}
+BNST.neurons_cluster9@meta.data$clus9_subclusters <- NA
+BNST.neurons_cluster9@meta.data$clus9_subclusters[BNST.neurons_cluster9$SCT_snn_res.0.12 == "0"] <- "Sim1-Slit3" #442 cells
+BNST.neurons_cluster9@meta.data$clus9_subclusters[BNST.neurons_cluster9$SCT_snn_res.0.12 == "1"] <- "Sim1-Bnc2" #397 cells
+BNST.neurons_cluster9@meta.data$clus9_subclusters[BNST.neurons_cluster9$SCT_snn_res.0.12 == "2"] <- "Sim1-Trh" #333 cells
+BNST.neurons_cluster9@meta.data$clus9_subclusters[BNST.neurons_cluster9$SCT_snn_res.0.12 == "3"] <- "Sim1-Th" #313 cells
+BNST.neurons_cluster9@meta.data$clus9_subclusters[BNST.neurons_cluster9$SCT_snn_res.0.12 == "4"] <- "Sim1-Oxt" #306 cells
+BNST.neurons_cluster9@meta.data$clus9_subclusters[BNST.neurons_cluster9$SCT_snn_res.0.12 == "5"] <- "Sim1-Opn5" #293 cells
+BNST.neurons_cluster9@meta.data$clus9_subclusters[BNST.neurons_cluster9$SCT_snn_res.0.12 == "6"] <- "Sim1-Nxph1" #292 cells
+BNST.neurons_cluster9@meta.data$clus9_subclusters[BNST.neurons_cluster9$SCT_snn_res.0.12 == "7"] <- "Sim1-Maf" #258 cells
+table(BNST.neurons_cluster9$clus9_subclusters)
+
+p <- DimPlot(BNST.neurons_cluster9, reduction = "umap", group.by = "clus9_subclusters", label = FALSE) + 
+     ggtitle ("BNST Cluster 9 Neurons") + theme(legend.position = "none")
+LabelClusters(p, id = "clus9_subclusters", size = 4, fontface = "bold")
+```
+
+## Visualize Oxt neuron distribution across cluster 9 subclusters.
+*See output in figures/BNST.oxtneurons_on_clus9neurons.pdf*
+
+``` {r figures}
+
+# extract UMAP coordinates for all neurons set
+df <- FetchData(BNST.neurons_cluster9, vars = c("umap_1", "umap_2", "clus9_subclusters")) 
+
+# highlight Oxt neurons
+df$highlight <- Cells(BNST.neurons_cluster9) %in% Cells(BNST.oxt_neurons) 
+p + 
+  geom_point(
+    data = subset(df, highlight),
+    aes(x = umap_1, y = umap_2),
+    color = "black",
+    size = 0.8,
+    alpha = 0.9
+  ) + ggtitle("Cluster 9 OXT Neurons")
+dev.off()
+highlighted_cells <- intersect(Cells(BNST.neurons_cluster9), Cells(BNST.merged_oxt_neurons))
+BNST.cluster9_oxt <- subset(BNST.neurons_cluster9, cells = highlighted_cells) 
+```
+
+78 Oxt-expressing cells in cluster 9
+46 cells (60%) are in the Oxt-DE cluster
+40 of the Oxt-DE cells are in the BNST_Oxt-Sim1 cluster
+
+```{r save progress}
+
+saveRDS(BNST.neurons_cluster9, file = "C:/shares/btrainor/Sinead/GitHub/BNST.neurons_cluster9.rds")
+```
+
