@@ -1,0 +1,143 @@
+---
+title: 'BNST 2025 Analysis: Oxt Neurons'
+author: "Sinead Archdeacon"
+date: "2026-03-25"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+This section analyzes oxytocin-expressing neurons, identified during final filtering stages in the all_neurons Rmd. The BNST Oxt neurons are subclustered and further analyzed in the BNST_PVN_integration Rmd.
+
+```{r Environment setup}
+
+# Increase capacity of R: necessary at the start of every session
+options(future.globals.maxSize = 60000 * 1024^2)
+
+# Load libraries
+library(Seurat)
+library(dplyr)
+library(ggplot2)
+library(sctransform) 
+library(harmony)
+```
+
+## Read in the data
+
+```{r Read in data}
+
+BNST.merged_neurons <- readRDS(file = "C:/shares/btrainor/Sinead/GitHub/BNST.merged_neurons.rds")
+```
+
+## Subsetting for Oxt neurons
+
+Histogram to visualize oxytocin expression across all neurons:
+
+*See output in BNST.merged_neurons_oxt_expr.pdf*
+
+```{r find Oxt neurons}
+
+oxt_expr <- FetchData(BNST.merged_neurons, vars = "Oxt", assay = "RNA", layer = "counts")
+oxt_df <- data.frame(expression = oxt_expr$Oxt)
+summary(oxt_df) #mean 0.019, 3rd quartile 0, max 71
+
+print(ggplot(oxt_expr, aes_string(x = "Oxt")) +
+        geom_histogram(binwidth = 0.5, fill = "blue", color = "black") + 
+        theme_minimal() +
+        labs(title = paste("Oxt Expression (RNA Counts)"),
+             x = "Expression Level",
+             y = "Number of Cells"))
+
+print(ggplot(oxt_expr, aes_string(x = "Oxt")) +
+        geom_histogram(binwidth = 0.5, fill = "blue", color = "black") + 
+        theme_minimal() +
+        xlim(1, NA) +
+        labs(title = paste("Oxt Expression (RNA Counts)"),
+             x = "Expression Level",
+             y = "Number of Cells"))
+```
+
+I subset for Oxt+ neurons, re-normalized, and re-clustered the subset.
+
+```{r continue}
+BNST.oxt_neurons <- subset(BNST.merged_neurons, oxt_status %in% "yes") # 463 oxt neurons
+table(BNST.oxt_neurons$subtype) #majority GABA (36 glut)
+table(BNST.oxt_neurons$subtype, BNST.merged_oxt_neurons$legend_label) 
+# cluster 9 is mostly "ambiguous" GABA/glut subtype
+
+table(BNST.oxt_neurons$SCT_snn_res.0.3)
+table(BNST.oxt_neurons$oxt_status, BNST.merged_neurons$SCT_snn_res.0.3)
+
+# re-normalize, rerun UMAP
+DefaultAssay(BNST.oxt_neurons) <- "RNA"
+BNST.oxt_neurons <- NormalizeData(BNST.oxt_neurons, normalization.method = "LogNormalize", scale.factor = 10000)
+BNST.oxt_neurons <- SCTransform(BNST.oxt_neurons, method = "glmGamPoi", 
+                                   return.only.var.genes = FALSE, 
+                                   variable.features.n = 3000, 
+                                   verbose = FALSE) 
+BNST.oxt_neurons <- RunPCA(BNST.oxt_neurons)
+ElbowPlot(BNST.oxt_neurons, ndims =50)
+BNST.oxt_neurons <- FindNeighbors(BNST.oxt_neurons, reduction = "pca", dims = 1:5) 
+BNST.oxt_neurons <- FindClusters(BNST.oxt_neurons, res = 0.05)
+BNST.oxt_neurons <- RunUMAP(BNST.oxt_neurons, dims = 1:5) 
+table(BNST.oxt_neurons$SCT_snn_res.0.05)
+table(BNST.oxt_neurons$legend_label, BNST.oxt_neurons$SCT_snn_res.0.05)
+```
+
+40 of the 43 BNST_Sim1-Oxt neurons are from Cluster 9, and all of these are from the Oxt-DE subcluster (see BNST_PVN_integration where I verified this)
+However, Cluster 9 has 78 Oxt neurons so only about half of them fall into the BNST_Sim1-Oxt cluster
+
+## Highlight Oxt neurons on all neurons to see distribution
+*See output in BNST.oxt_neurons_on_all_neurons.pdf*
+
+```{r continue}
+
+df <- FetchData(
+  BNST.cluster9_oxt,
+  vars = c("clus9_subclusters", "SCT_snn_res.0.05"))
+ggplot(df, aes(x = clus9_subclusters, fill = SCT_snn_res.0.05)) +
+  geom_bar(position = "fill") +          # "fill" makes it proportional (0–1)
+  ylab("Proportion of Cells") +
+  xlab("clus9_subcluster") +
+  ggtitle("Overlap of clus9_subclusters and SCT_snn_res.0.05") +
+  scale_fill_brewer(palette = "Set2") +
+  theme_minimal(base_size = 14)
+
+pale_colors <- scales::hue_pal(l = 80, c = 30)(length(unique(Idents(BNST.merged_neurons_filt)))) 
+p <- DimPlot(BNST.merged_neurons_filt, group.by = "legend_label", cols = pale_colors, pt.size = 0.5) + theme(legend.position = "none")
+df <- FetchData(BNST.merged_neurons_filt, vars = c("umap_1", "umap_2", "legend_label")) # extract UMAP coordinates for all neurons set
+df$highlight <- Cells(BNST.merged_neurons_filt) %in% Cells(BNST.merged_oxt_neurons) # highlight Oxt neurons
+p + 
+  geom_point(
+    data = subset(df, highlight),
+    aes(x = umap_1, y = umap_2),
+    color = "black",
+    size = 0.8,
+    alpha = 0.9
+  ) + ggtitle("BNST Oxt Neurons")
+```
+
+Then I inspected by-cluster Oxt expression in Oxt neurons.
+*See output in BNST.oxt_neurons_oxt_expr_by_cluster.pdf, BNST.oxt_neurons_oxt_expr_by_cluster.csv*
+
+```{r Oxt expression in Oxt neurons} 
+
+DefaultAssay(BNST.merged_oxt_neurons) <- "RNA"
+BNST.merged_oxt_neurons$SCT_snn_res.0.3 <- as.numeric(as.character(BNST.merged_oxt_neurons$SCT_snn_res.0.3))
+VlnPlot(BNST.merged_oxt_neurons, features = "Oxt", group.by = "SCT_snn_res.0.3", pt.size = 0) +   
+  ylab("Oxt Expression") + xlab("Cluster") + ggtitle("All Oxt-Expressing Neurons")
+
+oxtneurons_oxtcounts <- FetchData(BNST.merged_oxt_neurons, vars = c("Oxt", "SCT_snn_res.0.3"), layer = "counts")
+summary_by_cluster <- oxtneurons_oxtcounts %>%
+  group_by(SCT_snn_res.0.3) %>%
+  summarise(
+    n_cells = n(),
+    min_Oxt_reads = min(Oxt),
+    mean_Oxt_reads = mean(Oxt),
+    max_Oxt_reads = max(Oxt)) %>%
+  arrange(as.numeric(as.character(SCT_snn_res.0.3)))
+
+write.csv(summary_by_cluster, file = "C:/shares/btrainor/Sinead/GitHub/BNST.oxt_neurons_oxt_expr_by_cluster.csv", row.names = FALSE)
+```
