@@ -1,0 +1,713 @@
+---
+title: "BNST 2025 Analysis: Preprocessing"
+author: "Sinead Archdeacon"
+date: "2026-03-20"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      message = FALSE,  
+                      warning = FALSE
+                      )
+```
+
+The first step of this snRNA-seq analysis is to load and pre-process the raw data from 10X Genomics CellRanger, following a typical Seurat workflow.
+
+## Environment setup
+
+```{r Environment setup}
+# Increase capacity of R: necessary at the start of every session
+options(future.globals.maxSize = 60000 * 1024^2)
+
+# Load libraries  
+library(Seurat)
+library(dplyr)
+library(glmGamPoi)
+library(ggplot2)
+library(SingleCellExperiment)
+library(scDblFinder)
+library(gt)
+library(sctransform)
+library(harmony)
+```
+
+## Seurat object creation
+
+First, add the .h5 files to the RStudio environment.
+
+```{r Upload files}
+
+BNSTData_malec1 <- Read10X_h5(filename = 'C:/shares/btrainor/Sequencingdata/Resequenced_BNST/BNST_MALE_C1/filtered_feature_bc_matrix.h5', use.names = TRUE, unique.features = TRUE)
+BNSTData_malec2 <- Read10X_h5(filename = 'C:/shares/btrainor/Sequencingdata/Resequenced_BNST/BNST_MALE_C2/filtered_feature_bc_matrix.h5', use.names = TRUE, unique.features = TRUE)
+BNSTData_malec3 <- Read10X_h5(filename = 'C:/shares/btrainor/Sequencingdata/Resequenced_BNST/BNST_MALE_C3/filtered_feature_bc_matrix.h5', use.names = TRUE, unique.features = TRUE)
+BNSTData_femc1 <- Read10X_h5(filename = 'C:/shares/btrainor/Sequencingdata/Resequenced_BNST/BNST_FEM_C1/filtered_feature_bc_matrix.h5', use.names = TRUE, unique.features = TRUE)
+BNSTData_femc2 <- Read10X_h5(filename = 'C:/shares/btrainor/Sequencingdata/Resequenced_BNST/BNST_FEM_C2/filtered_feature_bc_matrix.h5', use.names = TRUE, unique.features = TRUE)
+BNSTData_femc3 <- Read10X_h5(filename = 'C:/shares/btrainor/Sequencingdata/Resequenced_BNST/BNST_FEM_C3/filtered_feature_bc_matrix.h5', use.names = TRUE, unique.features = TRUE)
+BNSTData_males1 <- Read10X_h5(filename = 'C:/shares/btrainor/Sequencingdata/Resequenced_BNST/BNST_MALE_S1/filtered_feature_bc_matrix.h5', use.names = TRUE, unique.features = TRUE)
+BNSTData_males2 <- Read10X_h5(filename = 'C:/shares/btrainor/Sequencingdata/Resequenced_BNST/BNST_MALE_S2/filtered_feature_bc_matrix.h5', use.names = TRUE, unique.features = TRUE)
+BNSTData_males3 <- Read10X_h5(filename = 'C:/shares/btrainor/Sequencingdata/Resequenced_BNST/BNST_MALE_S3/filtered_feature_bc_matrix.h5', use.names = TRUE, unique.features = TRUE)
+BNSTData_fems1 <- Read10X_h5(filename = 'C:/shares/btrainor/Sequencingdata/Resequenced_BNST/BNST_FEM_S1/filtered_feature_bc_matrix.h5', use.names = TRUE, unique.features = TRUE)
+BNSTData_fems2 <- Read10X_h5(filename = 'C:/shares/btrainor/Sequencingdata/Resequenced_BNST/BNST_FEM_S2/filtered_feature_bc_matrix.h5', use.names = TRUE, unique.features = TRUE)
+BNSTData_fems3 <- Read10X_h5(filename = 'C:/shares/btrainor/Sequencingdata/Resequenced_BNST/BNST_FEM_S3/filtered_feature_bc_matrix.h5', use.names = TRUE, unique.features = TRUE)
+```
+
+I converted these to Seurat objects and added metadata columns for sex, condition, pooled sample identity, and percent ribosomal RNA (a helpful QC metric). You can also add percent mitochondrial RNA and Malat1 for QC, but these values were always zero in our data.
+
+```{r Create Seurat objects}
+
+BNST_SeuratObject_malec1 <- CreateSeuratObject(counts = BNSTData_malec1)
+BNST_SeuratObject_malec2 <- CreateSeuratObject(counts = BNSTData_malec2)
+BNST_SeuratObject_malec3 <- CreateSeuratObject(counts = BNSTData_malec3)
+BNST_SeuratObject_femc1 <- CreateSeuratObject(counts = BNSTData_femc1)
+BNST_SeuratObject_femc2 <- CreateSeuratObject(counts = BNSTData_femc2)
+BNST_SeuratObject_femc3 <- CreateSeuratObject(counts = BNSTData_femc3)
+
+BNST_SeuratObject_males1 <- CreateSeuratObject(counts = BNSTData_males1)
+BNST_SeuratObject_males2 <- CreateSeuratObject(counts = BNSTData_males2)
+BNST_SeuratObject_males3 <- CreateSeuratObject(counts = BNSTData_males3)
+BNST_SeuratObject_fems1 <- CreateSeuratObject(counts = BNSTData_fems1)
+BNST_SeuratObject_fems2 <- CreateSeuratObject(counts = BNSTData_fems2)
+BNST_SeuratObject_fems3 <- CreateSeuratObject(counts = BNSTData_fems3)
+
+# sex
+BNST_SeuratObject_malec1@meta.data$sex <- "male"
+BNST_SeuratObject_malec2@meta.data$sex <- "male"
+BNST_SeuratObject_malec3@meta.data$sex <- "male"
+BNST_SeuratObject_femc1@meta.data$sex <- "female"
+BNST_SeuratObject_femc2@meta.data$sex <- "female"
+BNST_SeuratObject_femc3@meta.data$sex <- "female"
+BNST_SeuratObject_males1@meta.data$sex <- "male"
+BNST_SeuratObject_males2@meta.data$sex <- "male"
+BNST_SeuratObject_males3@meta.data$sex <- "male"
+BNST_SeuratObject_fems1@meta.data$sex <- "female"
+BNST_SeuratObject_fems2@meta.data$sex <- "female"
+BNST_SeuratObject_fems3@meta.data$sex <- "female"
+
+# condition
+BNST_SeuratObject_malec1@meta.data$condition <- "control"
+BNST_SeuratObject_malec2@meta.data$condition <- "control"
+BNST_SeuratObject_malec3@meta.data$condition <- "control"
+BNST_SeuratObject_femc1@meta.data$condition <- "control"
+BNST_SeuratObject_femc2@meta.data$condition <- "control"
+BNST_SeuratObject_femc3@meta.data$condition <- "control"
+BNST_SeuratObject_males1@meta.data$condition <- "stress"
+BNST_SeuratObject_males2@meta.data$condition <- "stress"
+BNST_SeuratObject_males3@meta.data$condition <- "stress"
+BNST_SeuratObject_fems1@meta.data$condition <- "stress"
+BNST_SeuratObject_fems2@meta.data$condition <- "stress"
+BNST_SeuratObject_fems3@meta.data$condition <- "stress"
+
+# pooled sample identity
+BNST_SeuratObject_malec1@meta.data$orig.ident <- "malec1"
+BNST_SeuratObject_malec2@meta.data$orig.ident <- "malec2"
+BNST_SeuratObject_malec3@meta.data$orig.ident <- "malec3"
+BNST_SeuratObject_femc1@meta.data$orig.ident <- "femc1"
+BNST_SeuratObject_femc2@meta.data$orig.ident <- "femc2"
+BNST_SeuratObject_femc3@meta.data$orig.ident <- "femc3"
+BNST_SeuratObject_males1@meta.data$orig.ident <- "males1"
+BNST_SeuratObject_males2@meta.data$orig.ident <- "males2"
+BNST_SeuratObject_males3@meta.data$orig.ident <- "males3"
+BNST_SeuratObject_fems1@meta.data$orig.ident <- "fems1"
+BNST_SeuratObject_fems2@meta.data$orig.ident <- "fems2"
+BNST_SeuratObject_fems3@meta.data$orig.ident <- "fems3"
+
+# rename cells to match sample identity
+BNST_SeuratObject_malec1 <- RenameCells(BNST_SeuratObject_malec1, add.cell.id = "malec1_")
+BNST_SeuratObject_malec2 <- RenameCells(BNST_SeuratObject_malec2, add.cell.id = "malec2_")
+BNST_SeuratObject_malec3 <- RenameCells(BNST_SeuratObject_malec3, add.cell.id = "malec3_")
+BNST_SeuratObject_femc1 <- RenameCells(BNST_SeuratObject_femc1, add.cell.id = "femc1_")
+BNST_SeuratObject_femc2 <- RenameCells(BNST_SeuratObject_femc2, add.cell.id = "femc2_")
+BNST_SeuratObject_femc3 <- RenameCells(BNST_SeuratObject_femc3, add.cell.id = "femc3_")
+BNST_SeuratObject_males1 <- RenameCells(BNST_SeuratObject_males1, add.cell.id = "males1_")
+BNST_SeuratObject_males2 <- RenameCells(BNST_SeuratObject_males2, add.cell.id = "males2_")
+BNST_SeuratObject_males3 <- RenameCells(BNST_SeuratObject_males3, add.cell.id = "males3_")
+BNST_SeuratObject_fems1 <- RenameCells(BNST_SeuratObject_fems1, add.cell.id = "fems1_")
+BNST_SeuratObject_fems2 <- RenameCells(BNST_SeuratObject_fems2, add.cell.id = "fems2_")
+BNST_SeuratObject_fems3 <- RenameCells(BNST_SeuratObject_fems3, add.cell.id = "fems3_")
+
+# percent ribosomal RNA
+BNST_SeuratObject_malec1[["percent.ribo"]] <- PercentageFeatureSet(BNST_SeuratObject_malec1, pattern = "^Rp[sl]")
+BNST_SeuratObject_malec2[["percent.ribo"]] <- PercentageFeatureSet(BNST_SeuratObject_malec2, pattern = "^Rp[sl]")
+BNST_SeuratObject_malec3[["percent.ribo"]] <- PercentageFeatureSet(BNST_SeuratObject_malec3, pattern = "^Rp[sl]")
+BNST_SeuratObject_femc1[["percent.ribo"]] <- PercentageFeatureSet(BNST_SeuratObject_femc1, pattern = "^Rp[sl]")
+BNST_SeuratObject_femc2[["percent.ribo"]] <- PercentageFeatureSet(BNST_SeuratObject_femc2, pattern = "^Rp[sl]")
+BNST_SeuratObject_femc3[["percent.ribo"]] <- PercentageFeatureSet(BNST_SeuratObject_femc3, pattern = "^Rp[sl]")
+BNST_SeuratObject_males1[["percent.ribo"]] <- PercentageFeatureSet(BNST_SeuratObject_males1, pattern = "^Rp[sl]")
+BNST_SeuratObject_males2[["percent.ribo"]] <- PercentageFeatureSet(BNST_SeuratObject_males2, pattern = "^Rp[sl]")
+BNST_SeuratObject_males3[["percent.ribo"]] <- PercentageFeatureSet(BNST_SeuratObject_males3, pattern = "^Rp[sl]")
+BNST_SeuratObject_fems1[["percent.ribo"]] <- PercentageFeatureSet(BNST_SeuratObject_fems1, pattern = "^Rp[sl]")
+BNST_SeuratObject_fems2[["percent.ribo"]] <- PercentageFeatureSet(BNST_SeuratObject_fems2, pattern = "^Rp[sl]")
+BNST_SeuratObject_fems3[["percent.ribo"]] <- PercentageFeatureSet(BNST_SeuratObject_fems3, pattern = "^Rp[sl]")
+```
+
+## Quality control/filtering
+
+Here I inspected the metrics **nFeature_RNA** (the number of unique genes in each cell) and **nCount_RNA** (the number of UMI counts per cell), which are included automatically in the CellRanger output.
+
+A very low nFeature (below ~200-500 genes) or nCount (below ~1000 UMIs) can indicate a dead/dying cell or empty droplet (background noise). Meanwhile, a very high nFeature (above ~2500-3000 genes) or nCount (above the 95th-99th percentile of the data) can indicate a multiplet. I removed these outliers to eliminate low-quality cells from my data. 
+
+I generated violin plots to visualize the distribution of nFeature and nCount for each sample, and scatter plots to visualize the relationship between nCount and nFeature (which should be roughly linear for high-quality cells). I inspected these plots to pick approximate thresholds for filtering. (However, more complex statistical methods can be used to generate threshold values.) Thresholds were determined separately for each object.
+
+*See preprocessing figures folder for QC output*
+
+```{r QC malec1}
+
+# violin plot
+p1 <- VlnPlot(
+  BNST_SeuratObject_malec1,
+  features = c("nFeature_RNA", "nCount_RNA")
+) &
+  theme(
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank()
+  ) &
+  xlab("malec1")
+print(p1)
+
+# scatter plot
+fs1 <- FeatureScatter(BNST_SeuratObject_malec1, 
+                     feature1 = "nCount_RNA", 
+                     feature2 = "nFeature_RNA",
+                     plot.cor = FALSE) + 
+   geom_smooth(method = 'lm') +
+   ggtitle("malec1") +
+   theme(legend.position = "none")
+print(fs1)
+
+# filter using thresholds determined from plots
+BNST_SeuratObject_malec1 <- subset(BNST_SeuratObject_malec1, 
+                            subset = nFeature_RNA > 1000 & nFeature_RNA < 7500 & nCount_RNA < 40000)
+```
+
+
+```{r QC malec2}
+
+# violin plot
+p2 <- VlnPlot(
+  BNST_SeuratObject_malec2,
+  features = c("nFeature_RNA", "nCount_RNA")
+) &
+  theme(
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank()
+  ) &
+  xlab("malec2")
+print(p2)
+
+# scatter plot
+fs2 <- FeatureScatter(BNST_SeuratObject_malec2, 
+                      feature1 = "nCount_RNA", 
+                      feature2 = "nFeature_RNA",
+                      plot.cor = FALSE) +
+   geom_smooth(method = 'lm') +
+   ggtitle("malec2") +
+   theme(legend.position = "none")
+print(fs2)
+
+# filter using thresholds determined from plots
+BNST_SeuratObject_malec2 <- subset(BNST_SeuratObject_malec2, 
+                            subset = nFeature_RNA > 1000 & nFeature_RNA < 8000 & nCount_RNA < 55000)
+```
+
+
+```{r QC malec3}
+
+# violin plot
+p3 <- VlnPlot(
+  BNST_SeuratObject_malec3,
+  features = c("nFeature_RNA", "nCount_RNA")
+) &
+  theme(
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank()
+  ) &
+  xlab("malec3")
+print(p3)
+
+# scatter plot
+fs3 <- FeatureScatter(BNST_SeuratObject_malec3, 
+                      feature1 = "nCount_RNA", 
+                      feature2 = "nFeature_RNA",
+                      plot.cor = FALSE) +
+   geom_smooth(method = 'lm') +
+   ggtitle("malec3") +
+   theme(legend.position = "none")
+print(fs3)
+
+# filter using thresholds determined from plots
+BNST_SeuratObject_malec3 <- subset(BNST_SeuratObject_malec3, 
+                            subset = nFeature_RNA > 1000 & nFeature_RNA < 10000 & nCount_RNA < 100000)
+```
+
+
+```{r QC femc1}
+
+# violin plot
+p4 <- VlnPlot(
+  BNST_SeuratObject_femc1,
+  features = c("nFeature_RNA", "nCount_RNA")
+) &
+  theme(
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank()
+  ) &
+  xlab("femc1")
+print(p4)
+
+# scatter plot
+fs4 <- FeatureScatter(BNST_SeuratObject_femc1, 
+                      feature1 = "nCount_RNA", 
+                      feature2 = "nFeature_RNA",
+                      plot.cor = FALSE) + 
+   geom_smooth(method = 'lm') +
+   ggtitle("femc1") +
+   theme(legend.position = "none")
+print(fs4)
+
+# filter using thresholds determined from plots
+BNST_SeuratObject_femc1 <- subset(BNST_SeuratObject_femc1, 
+                           subset = nFeature_RNA > 1000 & nFeature_RNA < 10000 & nCount_RNA < 80000)
+```
+
+
+```{r QC femc2}
+
+# violin plot
+p5 <- VlnPlot(
+  BNST_SeuratObject_femc2,
+  features = c("nFeature_RNA", "nCount_RNA")
+) &
+  theme(
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank()
+  ) &
+  xlab("femc2")
+print(p5)
+
+# scatter plot
+fs5 <- FeatureScatter(BNST_SeuratObject_femc2, 
+                      feature1 = "nCount_RNA", 
+                      feature2 = "nFeature_RNA",
+                      plot.cor = FALSE) + 
+   geom_smooth(method = 'lm') +
+   ggtitle("femc2") +
+   theme(legend.position = "none")
+print(fs5)
+
+# filter using thresholds determined from plots
+BNST_SeuratObject_femc2 <- subset(BNST_SeuratObject_femc2, 
+                           subset = nFeature_RNA > 1000 & nFeature_RNA < 8000 & nCount_RNA < 50000)
+```
+
+
+```{r QC femc3}
+
+# violin plot
+p6 <- VlnPlot(
+  BNST_SeuratObject_femc3,
+  features = c("nFeature_RNA", "nCount_RNA")
+) &
+  theme(
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank()
+  ) &
+  xlab("femc3")
+print(p6)
+
+# scatter plot
+fs6 <- FeatureScatter(BNST_SeuratObject_femc3, 
+                      feature1 = "nCount_RNA", 
+                      feature2 = "nFeature_RNA",
+                      plot.cor = FALSE) +
+   geom_smooth(method = 'lm') +
+   ggtitle("femc3") +
+   theme(legend.position = "none")
+print(fs6)
+
+# filter using thresholds determined from plots
+BNST_SeuratObject_femc3 <- subset(BNST_SeuratObject_femc3, 
+                           subset = nFeature_RNA > 1000 & nFeature_RNA < 11000 & nCount_RNA < 110000)
+```
+
+
+```{r males1}
+
+# violin plot
+p7 <- VlnPlot(
+  BNST_SeuratObject_males1,
+  features = c("nFeature_RNA", "nCount_RNA")
+) &
+  theme(
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank()
+  ) &
+  xlab("males1")
+print(p7)
+
+# scatter plot
+fs7 <- FeatureScatter(BNST_SeuratObject_males1, 
+                      feature1 = "nCount_RNA", 
+                      feature2 = "nFeature_RNA",
+                      plot.cor = FALSE) + 
+   geom_smooth(method = 'lm') +
+   ggtitle("males1") +
+   theme(legend.position = "none")
+print(fs7)
+
+# filter using thresholds determined from plots
+BNST_SeuratObject_males1 <- subset(BNST_SeuratObject_males1, 
+                            subset = nFeature_RNA > 1000 & nFeature_RNA < 11000 & nCount_RNA < 80000)
+```
+
+
+```{r males2}
+
+# violin plot
+p8 <- VlnPlot(
+  BNST_SeuratObject_males2,
+  features = c("nFeature_RNA", "nCount_RNA")
+) &
+  theme(
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank()
+  ) &
+  xlab("males2")
+print(p8)
+
+# scatter plot
+fs8 <- FeatureScatter(BNST_SeuratObject_males2, 
+                      feature1 = "nCount_RNA", 
+                      feature2 = "nFeature_RNA",
+                      plot.cor = FALSE) + 
+   geom_smooth(method = 'lm') +
+   ggtitle("males2") +
+   theme(legend.position = "none")
+print(fs8)
+
+# filter using thresholds determined from plots
+BNST_SeuratObject_males2 <- subset(BNST_SeuratObject_males2, 
+                            subset = nFeature_RNA > 1000 & nFeature_RNA < 8000 & nCount_RNA < 45000)
+```
+
+
+```{r males3}
+
+# violin plot
+p9 <- VlnPlot(
+  BNST_SeuratObject_males3,
+  features = c("nFeature_RNA", "nCount_RNA")
+) &
+  theme(
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank()
+  ) &
+  xlab("males3")
+print(p9)
+
+# scatter plot
+fs9 <- FeatureScatter(BNST_SeuratObject_males3, 
+                      feature1 = "nCount_RNA", 
+                      feature2 = "nFeature_RNA",
+                      plot.cor = FALSE) + 
+   geom_smooth(method = 'lm') +
+   ggtitle("males3") +
+   theme(legend.position = "none")
+print(fs9)
+
+# filter using thresholds determined from plots
+BNST_SeuratObject_males3 <- subset(BNST_SeuratObject_males3, 
+                            subset = nFeature_RNA > 1000 & nFeature_RNA < 10000 & nCount_RNA < 90000)
+```
+
+
+```{r fems1}
+
+# violin plot
+p10 <- VlnPlot(
+  BNST_SeuratObject_fems1,
+  features = c("nFeature_RNA", "nCount_RNA")
+) &
+  theme(
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank()
+  ) &
+  xlab("fems1")
+print(p10)
+
+# scatter plot
+fs10 <- FeatureScatter(BNST_SeuratObject_fems1, 
+                      feature1 = "nCount_RNA", 
+                      feature2 = "nFeature_RNA",
+                      plot.cor = FALSE) +
+   geom_smooth(method = 'lm') +
+   ggtitle("fems1") +
+   theme(legend.position = "none")
+print(fs10)
+
+# filter using thresholds determined from plots
+BNST_SeuratObject_fems1 <- subset(BNST_SeuratObject_fems1, 
+                           subset = nFeature_RNA > 1000 & nFeature_RNA < 10000 & nCount_RNA < 80000)
+```
+
+
+```{r fems2}
+
+# violin plot
+p11 <- VlnPlot(
+  BNST_SeuratObject_fems2,
+  features = c("nFeature_RNA", "nCount_RNA")
+) &
+  theme(
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank()
+  ) &
+  xlab("fems2")
+print(p11)
+
+# scatter plot
+fs11 <- FeatureScatter(BNST_SeuratObject_fems2, 
+                       feature1 = "nCount_RNA", 
+                       feature2 = "nFeature_RNA",
+                       plot.cor = FALSE) + 
+   geom_smooth(method = 'lm') +
+   ggtitle("fems2") +
+   theme(legend.position = "none")
+print(fs11)
+
+# filter using thresholds determined from plots
+BNST_SeuratObject_fems2 <- subset(BNST_SeuratObject_fems2, 
+                           subset = nFeature_RNA > 1000 & nFeature_RNA < 8000 & nCount_RNA < 55000)
+```
+
+
+```{r fems3}
+
+# violin plot
+p12 <- VlnPlot(
+  BNST_SeuratObject_fems3,
+  features = c("nFeature_RNA", "nCount_RNA")
+) &
+  theme(
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank()
+  ) &
+  xlab("fems3")
+print(p12)
+
+# scatter plot
+fs12 <- FeatureScatter(BNST_SeuratObject_fems3, 
+                       feature1 = "nCount_RNA", 
+                       feature2 = "nFeature_RNA",
+                       plot.cor = FALSE) + 
+   geom_smooth(method = 'lm') +
+   ggtitle("fems3") +
+   theme(legend.position = "none")
+print(fs12)
+
+# filter using thresholds determined from plots
+BNST_SeuratObject_fems3 <- subset(BNST_SeuratObject_fems3, 
+                           subset = nFeature_RNA > 1000 & nFeature_RNA < 10000 & nCount_RNA < 80000)
+```
+
+## Doublet removal
+
+The **scDblFinder** package creates artificial doublets and trains a model to remove ambiguous cells. The model can then set threshold scores for calling doublets. I used this as a faster alternative to DoubletFinder since the Seurat objects were so large.
+
+*See BNST_doublet_removal_summary.csv for output*
+
+```{r Doublet removal}
+
+# Create a list of the filtered Seurat objects
+seurat_objects <- list(
+  malec1 = BNST_SeuratObject_malec1,
+  malec2 = BNST_SeuratObject_malec2,
+  malec3 = BNST_SeuratObject_malec3,
+  femc1 = BNST_SeuratObject_femc1,
+  femc2 = BNST_SeuratObject_femc2,
+  femc3 = BNST_SeuratObject_femc3,
+  males1 = BNST_SeuratObject_males1,
+  males2 = BNST_SeuratObject_males2,
+  males3 = BNST_SeuratObject_males3,
+  fems1 = BNST_SeuratObject_fems1,
+  fems2 = BNST_SeuratObject_fems2,
+  fems3 = BNST_SeuratObject_fems3
+)
+
+# Convert Seurat objects to single cell experiments (SCEs) and run scDblFinder 
+sce_list <- lapply(seurat_objects, function(obj) {
+  sce <- as.SingleCellExperiment(obj)
+  sce <- scDblFinder(sce)  # adds scDblFinder.class + scDblFinder.score
+  sce
+})
+```
+
+```{r Check doublet proportions, include = FALSE}
+# Check proportions of singlets vs doublets in SCEs
+lapply(sce_list, function(sce) {
+  prop.table(table(colData(sce)$scDblFinder.class))
+})
+```
+
+```{r Continue doublet removal}
+# Convert SCEs back to Seurat objects
+sce_list <- lapply(
+  sce_list,
+  function(sce) as.Seurat(sce, counts = "counts", data = NULL)
+)
+
+# Add metadata columns for percent doublets and subset for singlets
+seurat_objects_singlets <- lapply(seq_along(seurat_objects), function(i) {
+  seu <- seurat_objects[[i]]
+  sce <- sce_list[[i]]
+  
+  # extract doublet status and score
+  doublet_status <- sce$scDblFinder.class
+  doublet_score  <- sce$scDblFinder.score
+  names(doublet_status) <- colnames(sce)
+  names(doublet_score)  <- colnames(sce)
+  
+  # add metadata column to original Seurat object
+  seu$DoubletStatus <- doublet_status[colnames(seu)]
+  seu$DoubletScore  <- doublet_score[colnames(seu)]
+  
+  seu
+})
+
+# Inspect the doublet percentages
+get_val <- function(x, name) if (name %in% names(x)) x[[name]] else 0
+doublet_summary <- lapply(sce_list, function(obj) {
+  tab <- table(obj$scDblFinder.class)
+  
+  data.frame(
+    Sample = unique(obj$orig.ident)[1],
+    Singlets = get_val(tab, "singlet"),
+    Doublets = get_val(tab, "doublet"),
+    Total = sum(tab),
+    Doublet_Percent = (get_val(tab, "doublet") / sum(tab)) * 100
+  )
+}) %>% bind_rows()
+doublet_summary %>%
+  gt() %>%
+  fmt_number(columns = c(Singlets, Doublets, Total), decimals = 0) %>%
+  fmt_number(columns = Doublet_Percent, decimals = 2) %>%
+  cols_label(
+    Doublet_Percent = "Doublet (%)"
+  )
+
+# Subset singlets only
+seurat_objects_singlets <- lapply(seurat_objects_singlets, function(seu) {
+  subset(seu, subset = DoubletStatus == "singlet")
+})
+names(seurat_objects_singlets) <- names(seurat_objects)
+```
+
+```{r, include = FALSE}
+write.csv(doublet_summary, "C:/shares/btrainor/Sinead/GitHub/BNST_doublet_removal_summary.csv", row.names = FALSE)
+```
+
+## Normalization and PCA
+
+*Note:* At this point, I separated control and stress samples to avoid condition-driven effects when normalizing and clustering. The two sets of samples will be re-merged later in my analysis.
+
+**SCTransform** normalization helps remove technical effects, such as variations in sequencing depth, by incorporating more variable features into the analysis than NormalizeData. This helps capture more subtle biological differences between cells.
+
+The **RunPCA** function uses linear dimensionality reduction to compute orthogonal components (PCs) that explain maximum variance across cells. This is necessary prior to clustering.
+
+**Harmony** is used to correct for batch effects among the samples.
+
+```{r Normalization and PCA}
+
+# Separate objects into controls and stress lists
+seurat_objects_controls <- seurat_objects_singlets[c("malec1", "malec2", "malec3", "femc1", "femc2", "femc3")]
+seurat_objects_stress <- seurat_objects_singlets[c("males1", "males2", "males3", "fems1", "fems2", "fems3")]
+
+# Merge all control/stress objects into two separate objects
+DefaultAssay(seurat_objects_controls[[1]]) <- "RNA"
+BNST.controls <- merge(
+  x = seurat_objects_controls[[1]],
+  y = seurat_objects_controls[2:length(seurat_objects_controls)],
+  merge.data = TRUE
+)
+DefaultAssay(BNST.controls) <- "RNA"
+BNST.controls <- JoinLayers(object = BNST.controls, assay = "RNA", layers = "counts") 
+
+DefaultAssay(seurat_objects_stress[[1]]) <- "RNA"
+BNST.stress <- merge(
+  x = seurat_objects_stress[[1]],
+  y = seurat_objects_stress[2:length(seurat_objects_stress)],
+  merge.data = TRUE
+)
+DefaultAssay(BNST.stress) <- "RNA"
+BNST.stress <- JoinLayers(object = BNST.stress, assay = "RNA", layers = "counts") 
+
+#Run SCTransform on each merged object
+BNST.controls <- SCTransform(BNST.controls, method = "glmGamPoi",
+                             return.only.var.genes = FALSE,
+                             variable.features.n = 3000,
+                             residual_type = "pearson")
+BNST.stress <- SCTransform(BNST.stress, method = "glmGamPoi",
+                             return.only.var.genes = FALSE,
+                             variable.features.n = 3000,
+                             residual_type = "pearson")
+
+# Run PCA and batch correction (Harmony) on each object:
+
+DefaultAssay(BNST.controls) <- "SCT"
+BNST.controls <- RunPCA(BNST.controls, features = VariableFeatures(BNST.controls))
+BNST.controls <- RunHarmony(BNST.controls, assay.use = "SCT", group.by.vars = "orig.ident") 
+
+DefaultAssay(BNST.stress) <- "SCT"
+BNST.stress <- RunPCA(BNST.stress, features = VariableFeatures(BNST.stress))
+BNST.stress <- RunHarmony(BNST.stress, assay.use = "SCT", group.by.vars = "orig.ident") 
+```
+
+## Clustering
+
+I used **elbow plots** to select numbers of PCs that would capture most of the variation in my data without incorporating noise. I then tested a range of clustering resolutions to find one that yielded 30-40 clusters, which will help with filtering out low-quality clusters later in my analysis. I used **RunUMAP** to compute embeddings for each cell and visualized the clusters with DimPlot.
+
+```{r Control elbow plots}
+ElbowPlot(BNST.controls, ndims = 50) +
+  ggtitle("BNST control PCs")
+BNST.controls <- FindNeighbors(BNST.controls, reduction = "harmony", dims = 1:40) 
+```
+
+```{r Control clustering, results = 'hide'}
+res.vec <- c(0.1, 0.2, 0.3, 0.4, 0.6, 0.8, 1.0, 1.2) # vector of resolutions to test
+BNST.controls <- FindClusters(BNST.controls, resolution = res.vec) # inspect the number of clusters for each resolution
+BNST.controls <- FindClusters(BNST.controls, resolution = 0.5)  # gives 31 clusters, so use this res
+```
+
+```{r Control UMAPs}
+set.seed(123)
+BNST.controls <- RunUMAP(BNST.controls, reduction = "harmony", dims = 1:40)
+DimPlot(BNST.controls, reduction = "umap", group.by = "seurat_clusters", label = TRUE) +
+  ggtitle("BNST control clusters") +
+  theme(legend.position = "none")
+``` 
+
+``` {r Stress elbow plots}
+ElbowPlot(BNST.stress, ndims = 50) +
+  ggtitle("BNST stress PCs")
+BNST.stress <- FindNeighbors(BNST.stress, reduction = "harmony", dims = 1:40) 
+```
+
+```{r Stress clustering, results = 'hide'}
+res.vec <- c(0.1, 0.2, 0.3, 0.4, 0.6, 0.8, 1.0, 1.2) # vector of resolutions to test
+BNST.stress <- FindClusters(BNST.stress, resolution = res.vec) # inspect the number of clusters for each resolution
+BNST.stress <- FindClusters(BNST.stress, resolution = 0.5)  # gives 32 clusters, so use this res
+```
+
+```{r Stress UMAPs}
+set.seed(123)
+BNST.stress <- RunUMAP(BNST.stress, reduction = "harmony", dims = 1:40)
+DimPlot(BNST.stress, reduction = "umap", group.by = "seurat_clusters", label = TRUE) +
+  ggtitle("BNST stress clusters") +
+  theme(legend.position = "none")
+```
+
+## Save progress
+
+```{r Save progress}
+saveRDS(BNST.controls, file = "C:/shares/btrainor/Sinead/GitHub/BNST.controls.rds")
+saveRDS(BNST.stress, file = "C:/shares/btrainor/Sinead/GitHub/BNST.stress.rds")
+```
