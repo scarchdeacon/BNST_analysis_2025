@@ -1,10 +1,6 @@
 ---
 title: 'BNST 2025 Analysis: All Neurons'
 author: "Sinead Archdeacon"
-output:
-  html_document:
-    toc: true
-    toc_float: true
 date: "2026-03-22"
 ---
 
