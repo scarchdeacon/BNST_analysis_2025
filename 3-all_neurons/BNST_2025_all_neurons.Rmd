@@ -576,6 +576,6 @@ DimPlot(
 
 ```
 
-``` {save progress}
+``` {r save progress}
 saveRDS(BNST.merged_neurons, file = "C:/shares/btrainor/Sinead/GitHub/BNST.merged_neurons_labeled.rds") 
 ```
