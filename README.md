@@ -76,8 +76,7 @@ for analytical approaches rather than definitive conclusions. \
 -Cell typing could be performed on control and stress data together to streamline the workflow. \
 -Module-based cell type scoring could be used instead of label transfer to streamline the worklow
  if only interested in identifying one cell type. \
--QC may have been too stringent (multiple rounds of filtering), could try using less lenient parameters and see
- if results are consistent.
+-QC may have been too stringent (multiple rounds of filtering), could try using more lenient parameters and see if results are consistent.
 
 
  
