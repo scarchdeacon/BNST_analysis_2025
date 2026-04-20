@@ -1,14 +1,7 @@
 ## Description
-This analysis was completed from February-November 2025 using single nucleus RNA-seq data collected in 2023 and 2024
-by the Trainor lab in the UC Davis Department of Psychology. Analysis guidance was provided by the Nord lab at the 
-UC Davis Center for Neuroscience. Findings were presented at the Society for Neuroscience meeting in San Diego, CA 
-in November 2025.
+This analysis was completed from February-November 2025 using single nucleus RNA-seq data collected in 2023 and 2024 by the Trainor lab in the UC Davis Department of Psychology. Analysis guidance was provided by the Nord lab at the UC Davis Center for Neuroscience. Findings were presented at the Society for Neuroscience meeting in San Diego, CA in November 2025.
 
-BNST samples were collected from 24 California mice (*Peromyscus californicus*) (N = 12 males, 12 females; 
-3-6 months old). PVN samples (Step 6) were collected from ? California mice (N = 6 males, 12 females; 3-6 months 
-old). Sequencing was performed by the UC Davis Bioinformatics Core using the 10X Genomics Chromium kit, yielding 
-~250,000 sequenced cells (BNST) and () sequenced cells (PVN). Raw data was processed with the 10X Genomics 
-CellRanger pipeline before being loaded into RStudio, where it was analyzed using Seurat v4 and v5.
+BNST samples were collected from 24 California mice (*Peromyscus californicus*) (N = 12 males, 12 females). PVN samples (Step 6) were collected from 24 different California mice (N = 8 males, 16 females). For both datasets, sequencing was performed by the UC Davis Bioinformatics Core using the 10x Genomics Chromium Nuclei Isolation kit, yielding ~250,000 sequenced nuclei from the BNST and ~87,000 sequenced nuclei from the PVN. Raw data was processed with the 10X Genomics CellRanger pipeline before being loaded into RStudio, where it was analyzed using Seurat v4 and v5.
 
 ## Summary of coding steps
 **1. BNST Preprocessing** \
