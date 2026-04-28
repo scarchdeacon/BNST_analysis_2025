@@ -148,7 +148,7 @@ A very low nFeature (below ~200-500 genes) or nCount (below ~1000 UMIs) can indi
 
 I generated violin plots to visualize the distribution of nFeature and nCount for each sample, and scatter plots to visualize the relationship between nCount and nFeature (which should be roughly linear for high-quality cells). I inspected these plots to pick approximate thresholds for filtering. (However, more complex statistical methods can be used to generate threshold values.) Thresholds were determined separately for each object.
 
-*See preprocessing figures folder for QC output*
+*See preprocessing figures for QC output*
 
 ```{r QC malec1}
 
