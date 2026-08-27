@@ -66,6 +66,14 @@ By-cluster DE analysis \
 Cluster marker inspection \
 Cluster labeling and visualization
 
+*UMAP of cluster 9 subclusters* \
+![Cluster 9 subclusters](4-cluster9_neurons/BNST.neurons_cluster9_umap_labeled.png) \
+[Download high-resolution PDF](4-cluster9_neurons/BNST.neurons_cluster9_umap_labeled.pdf)
+
+*UMAP of oxytocin neurons on cluster 9 subclusters* \
+![OT neurons on cluster 9 subclusters](4-cluster9_neurons/BNST.oxtneurons_on_clus9neurons.png) \
+[Download high-resolution PDF](4-cluster9_neurons/BNST.oxtneurons_on_clus9neurons.pdf)
+
 **5. Analysis of BNST oxytocin neurons** \
 Oxytocin (Oxt) expression inspection \
 Subset Oxt-expressing neurons \
