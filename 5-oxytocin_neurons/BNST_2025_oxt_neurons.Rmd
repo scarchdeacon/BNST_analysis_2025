@@ -90,7 +90,7 @@ table(BNST.oxt_neurons$legend_label, BNST.oxt_neurons$SCT_snn_res.0.05)
 However, Cluster 9 has 78 Oxt neurons so only about half of them fall into the BNST_Sim1-Oxt cluster
 
 ## Highlight Oxt neurons on all neurons to see distribution
-*See output in BNST.oxt_neurons_on_all_neurons.pdf*
+*See output in BNST.oxt_neurons_on_all_neurons_condensed.pdf*
 
 ```{r continue}
 
