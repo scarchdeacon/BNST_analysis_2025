@@ -7,6 +7,12 @@ BNST samples were collected from 24 California mice (*Peromyscus californicus*) 
 **1. BNST Preprocessing** \
 Seurat object creation \
 Quality control/filtering \
+
+*Sample QC output* \
+![Sample QC output: violin plot](1-preprocessing/BNST_QCplots_femc1_rearranged_vlnplot.png) \
+![Sample QC output: line plot](1-preprocessing/BNST_QCplots_femc1_rearranged_lineplot.png) \
+[Download high-resolution PDF](1-preprocessing/BNST_QCplots_femc1_rearranged.pdf)
+
 Normalization (SCTransform) \
 Principal components analysis (PCA) \
 Clustering
