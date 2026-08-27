@@ -35,12 +35,29 @@ By-cluster cell type voting
 Visualization
 
 **3. Analysis of all BNST neurons** \
-Quality control, filtering for non-BNST contamination \
-Subset neurons \
+Quality control, filtering for non-BNST contamination
+
+*Sample QC output* \
+![Sample QC output](3-all_neurons/BNST.control_nonfilt_mapped_qc_plots.png) \
+[Download high-resolution PDF](3-all_neurons/BNST.control_nonfilt_mapped_qc_plots_condensed.pdf)
+
+*Sample UMAP prior to filtering* \
+![Prefilt UMAP](3-all_neurons/BNST.control_neurons_prefilt_umap1.png) \
+[Download high-resolution PDF](3-all_neurons/BNST.control_neurons_prefilt_umap.pdf)
+
+Subset neurons
+
+*Batch effects check* \
+![Batch effects check](3-all_neurons/BNST.batch_effects_check.png)
+
 Normalization, PCA, and clustering of neurons \
 By-cluster differential expression (DE) analysis \
 Cluster marker inspection \
 Cluster labeling and visualization
+
+*UMAP with labeled neuron clusters* \
+![Labeled neuron clusters](3-all_neurons/BNST.merged_neurons_labeled3.png) \
+[Download high-resolution PDF](3-all_neurons/BNST.merged_neurons_labeled3.pdf)
 
 **4. Analysis of BNST PVN-like neuron cluster (cluster 9)** \
 Subset cluster 9 \
