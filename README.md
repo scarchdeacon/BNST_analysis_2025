@@ -26,13 +26,12 @@ Reference-query data mapping
 ![Sample ref-query mapping output](2-cell_type_assignment/BNST_controls_celltype_mapping_classes.png) \
 [Download high-resolution PDF](2-cell_type_assignment/BNST_controls_celltype_mapping_plots_condensed.pdf)
 
+By-cluster cell type voting
+
 *Sample by-cluster voting output* \
 ![Sample voting output](2-cell_type_assignment/BNST_controls_by-cluster_voting_classes.png) \
 [Download high-resolution PDF](2-cell-type_assignment/BNST_controls_by-cluster_voting_plots.pdf)
 
-
-
-By-cluster cell type voting \
 Visualization
 
 **3. Analysis of all BNST neurons** \
