@@ -76,9 +76,18 @@ Cluster labeling and visualization
 
 **5. Analysis of BNST oxytocin neurons** \
 Oxytocin (Oxt) expression inspection \
-Subset Oxt-expressing neurons \
+Subset Oxt-expressing neurons 
+
+*Oxytocin neuron distribution* \
+![Oxytocin neuron distribution](5-oxytocin_neurons/BNST.oxt_neurons_on_all_neurons.png) \
+[Download high-resolution PDF](5-oxytocin_neurons/BNST.oxt_neurons_on_all_neurons_condensed.pdf)
+
 Normalization, PCA, and subclustering of Oxt neurons \
 By-subcluster Oxt expression inspection
+
+*Oxytocin expression in oxytocin neuron subclusters* \
+![Oxytocin expression in oxytocin neuron subclusters](5-oxytocin_neurons/BNST.oxt_neurons_oxt_expr_by_cluster.png) \
+[Download high-resolution PDF](5-oxytocin_neurons/BNST.oxt_neurons_oxt_expr_by_cluster.pdf)
 
 ## Limitations
 This analysis was exploratory and had limited sample sizes. Full reproducibility has not been verified in the 
