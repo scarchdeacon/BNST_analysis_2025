@@ -6,7 +6,7 @@ BNST samples were collected from 24 California mice (*Peromyscus californicus*) 
 ## Summary of coding steps
 **1. BNST Preprocessing** \
 Seurat object creation \
-Quality control/filtering \
+Quality control/filtering 
 
 *Sample QC output* \
 ![Sample QC output: violin plot](1-preprocessing/BNST_QCplots_femc1_rearranged_vlnplot.png) \
@@ -20,7 +20,18 @@ Clustering
 **2. BNST Cell type assignment** \
 Reference data Seurat object creation \
 Reference data normalization, PCA, & clustering \
-Reference-query data mapping \
+Reference-query data mapping 
+
+*Sample reference-query data mapping output* \
+![Sample ref-query mapping output](2-cell_type_assignment/BNST_controls_celltype_mapping_classes.png) \
+[Download high-resolution PDF](2-cell_type_assignment/BNST_controls_celltype_mapping_plots_condensed.pdf)
+
+*Sample by-cluster voting output* \
+![Sample voting output](2-cell_type_assignment/BNST_controls_by-cluster_voting_classes.png) \
+[Download high-resolution PDF](2-cell-type_assignment/BNST_controls_by-cluster_voting_plots.pdf)
+
+
+
 By-cluster cell type voting \
 Visualization
 
