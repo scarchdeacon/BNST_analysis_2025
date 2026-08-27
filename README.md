@@ -38,8 +38,8 @@ Visualization
 Quality control, filtering for non-BNST contamination
 
 *Sample QC output* \
-![Sample QC output](3-all_neurons/BNST.control_nonfilt_mapped_qc_plots.png) \
-[Download high-resolution PDF](3-all_neurons/BNST.control_nonfilt_mapped_qc_plots_condensed.pdf)
+![Sample QC output](3-all_neurons/BNST.controls_nonfilt_mapped_qc_plots.png) \
+[Download high-resolution PDF](3-all_neurons/BNST.controls_nonfilt_mapped_qc_plots_condensed.pdf)
 
 *Sample UMAP prior to filtering* \
 ![Prefilt UMAP](3-all_neurons/BNST.control_neurons_prefilt_umap1.png) \
