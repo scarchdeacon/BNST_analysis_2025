@@ -32,8 +32,6 @@ By-cluster cell type voting
 ![Sample voting output](2-cell_type_assignment/BNST_controls_by-cluster_voting_classes.png) \
 [Download high-resolution PDF](2-cell-type_assignment/BNST_controls_by-cluster_voting_plots.pdf)
 
-Visualization
-
 **3. Analysis of all BNST neurons** \
 Quality control, filtering for non-BNST contamination
 
@@ -53,7 +51,7 @@ Subset neurons
 Normalization, PCA, and clustering of neurons \
 By-cluster differential expression (DE) analysis \
 Cluster marker inspection \
-Cluster labeling and visualization
+Cluster labeling
 
 *UMAP with labeled neuron clusters* \
 ![Labeled neuron clusters](3-all_neurons/BNST.merged_neurons_labeled3.png) \
@@ -64,7 +62,7 @@ Subset cluster 9 \
 Normalization, PCA, and subclustering of cluster 9 neurons \
 By-cluster DE analysis \
 Cluster marker inspection \
-Cluster labeling and visualization
+Cluster labeling
 
 *UMAP of cluster 9 subclusters* \
 ![Cluster 9 subclusters](4-cluster9_neurons/BNST.neurons_cluster9_umap_labeled.png) \
