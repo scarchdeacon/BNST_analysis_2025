@@ -1,7 +1,7 @@
 ## Description
 This analysis was completed from February-November 2025 using single nucleus RNA-seq data collected in 2023 and 2024 by the Trainor lab in the UC Davis Department of Psychology. Analysis guidance was provided by the Nord lab at the UC Davis Center for Neuroscience. Findings were presented at the Society for Neuroscience meeting in San Diego, CA in November 2025.
 
-BNST samples were collected from 24 California mice (*Peromyscus californicus*) (N = 12 males, 12 females). Sequencing was performed by the UC Davis Bioinformatics Core using the 10x Genomics Chromium Nuclei Isolation kit, yielding ~250,000 sequenced nuclei. Raw data was processed with the 10X Genomics CellRanger pipeline before analysis in RStudio using Seurat v5.
+BNST samples were collected from 24 California mice (*Peromyscus californicus*) (N = 12 males, 12 females). Sequencing was performed by the UC Davis Bioinformatics Core using the 10x Genomics Chromium Nuclei Isolation kit, initially yielding ~250,000 sequenced nuclei. Raw data was processed with the 10X Genomics CellRanger pipeline before analysis in RStudio using Seurat v5.
 
 ## Summary of coding steps
 **1. BNST Preprocessing** \
@@ -30,7 +30,7 @@ By-cluster cell type voting
 
 *Sample by-cluster voting output* \
 ![Sample voting output](2-cell_type_assignment/BNST_controls_by-cluster_voting_classes.png) \
-[Download high-resolution PDF](2-cell-type_assignment/BNST_controls_by-cluster_voting_plots.pdf)
+[Download high-resolution PDF](2-cell_type_assignment/BNST_controls_by-cluster_voting_plots.pdf)
 
 **3. Analysis of all BNST neurons** \
 Quality control, filtering for non-BNST contamination
